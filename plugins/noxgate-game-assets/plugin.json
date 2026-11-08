@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "noxgate-game-assets",
+  "version": "0.1.1",
+  "description": "使用 NoxGate 批量生产和验收游戏图片与音频资产。",
+  "author": { "name": "NoxGate" },
+  "keywords": ["noxgate", "game", "assets", "image", "audio"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "NoxGate 游戏资产",
+        "shortDescription": "批量生产游戏图片和音频资产",
+        "longDescription": "按项目资产清单批量生成游戏图片、拆分组合图、组装 sprite sheet，并生产 BGM、战斗音乐、音效和环境音。",
+        "category": "Creative",
+        "defaultPrompt": ["使用 NoxGate 批量生产一组游戏图片资产。", "使用 NoxGate 生成一批游戏音频资产。"]
+      }
+    }
+  }
+}

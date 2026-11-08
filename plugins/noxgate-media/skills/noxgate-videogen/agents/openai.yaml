@@ -1,0 +1,4 @@
+interface:
+  display_name: "NoxGate 视频生成"
+  short_description: "通过当前 Codex provider 创建和轮询视频任务"
+  default_prompt: "使用 $noxgate-videogen 生成视频。"

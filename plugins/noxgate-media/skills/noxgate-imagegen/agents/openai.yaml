@@ -1,0 +1,4 @@
+interface:
+  display_name: "NoxGate 图片生成"
+  short_description: "复用当前 Codex 服务地址和认证，通过 NoxGate 生成或编辑图片"
+  default_prompt: "使用 $noxgate-imagegen 通过 NoxGate 生成图片。"

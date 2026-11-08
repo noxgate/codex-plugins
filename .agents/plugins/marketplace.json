@@ -1,0 +1,32 @@
+{
+  "name": "noxgate",
+  "interface": {
+    "displayName": "NoxGate Plugins"
+  },
+  "plugins": [
+    {
+      "name": "noxgate-media",
+      "source": {
+        "source": "local",
+        "path": "./plugins/noxgate-media"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Creative"
+    },
+    {
+      "name": "noxgate-game-assets",
+      "source": {
+        "source": "local",
+        "path": "./plugins/noxgate-game-assets"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Creative"
+    }
+  ]
+}

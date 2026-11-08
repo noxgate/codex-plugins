@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "noxgate-media",
+  "version": "0.1.1",
+  "description": "通过当前 Codex provider 使用 NoxGate 生成和编辑图片、视频及音频。",
+  "author": { "name": "NoxGate" },
+  "keywords": ["noxgate", "image", "video", "audio", "media"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "NoxGate 媒体创作",
+        "shortDescription": "生成图片、视频和音频",
+        "longDescription": "通过当前 Codex provider 调用 NoxGate 的图片、视频和音频接口，支持同步结果、异步轮询和结果下载。",
+        "category": "Creative",
+        "defaultPrompt": ["使用 NoxGate 生成一张图片。", "使用 NoxGate 生成一段视频。", "使用 NoxGate 生成音乐或音效。"]
+      }
+    }
+  }
+}

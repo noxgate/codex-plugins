@@ -1,0 +1,4 @@
+interface:
+  display_name: "NoxGate 音频生成"
+  short_description: "通过当前 Codex provider 生成音乐、音效和语音"
+  default_prompt: "使用 $noxgate-audiogen 生成音频。"
