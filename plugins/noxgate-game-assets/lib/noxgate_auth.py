@@ -148,7 +148,9 @@ def start_callback_server(redirect_uri: str, expected_state: str):
             if self.path != callback_path or self.headers.get("Host") != expected_host:
                 self.send_error(404)
                 return
-            body = """<!doctype html><html><head><meta name=referrer content=no-referrer><title>NoxGate</title></head><body><p>正在安全返回插件…</p><script>
+            # no-referrer makes browser form POSTs send Origin: null. Keep the
+            # same-origin Origin header; the fragment is cleared before submission.
+            body = """<!doctype html><html><head><meta name=referrer content=same-origin><title>NoxGate</title></head><body><p>正在安全返回插件…</p><script>
 const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,'',location.pathname);
 const f=document.createElement('form');f.method='post';f.action=location.pathname;
 for(const k of ['code','error','state']){const i=document.createElement('input');i.type='hidden';i.name=k;i.value=p.get(k)||'';f.appendChild(i)}
@@ -157,7 +159,7 @@ document.body.appendChild(f);f.submit();
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Referrer-Policy", "same-origin")
             self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

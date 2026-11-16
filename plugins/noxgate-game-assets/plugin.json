@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "noxgate-game-assets",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "使用 NoxGate 批量生产和验收游戏图片与音频资产。",
   "author": {
     "name": "NoxGate"
