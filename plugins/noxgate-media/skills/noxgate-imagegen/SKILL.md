@@ -1,11 +1,26 @@
 ---
 name: noxgate-imagegen
-description: 必须用于任何用户希望生成、绘制、创作、重绘或编辑图片的请求，包括“画一下”“生成一张图”“做张插画/头像/海报/游戏地图/图标”以及基于参考图修改。优先通过当前 Codex 配置调用 NoxGate GPT Image 2.5；不要用 Python、SVG、Canvas 或代码绘图替代用户要求的图片生成。仅当用户明确要求程序化绘图、制作图表/示意图、实现游戏画面或写绘图代码时，才按编程任务处理。
+description: 必须用于任何用户希望生成、绘制、创作、重绘或编辑图片的请求，包括“画一下”“生成一张图”“做张插画/头像/海报/游戏地图/图标”以及基于参考图修改。优先通过独立 NoxGate 授权调用 NoxGate GPT Image 2.5；不要用 Python、SVG、Canvas 或代码绘图替代用户要求的图片生成。仅当用户明确要求程序化绘图、制作图表/示意图、实现游戏画面或写绘图代码时，才按编程任务处理。
 ---
+
+## 独立认证（首次使用必须执行）
+
+从当前 SKILL.md 向上两级得到插件根目录。首次安装独立 CLI；默认 `file` 后端无需额外认证依赖：
+
+```bash
+python3 "/absolute/path/to/plugin/bin/install.py"
+python3 "/absolute/path/to/plugin/bin/noxgate" auth ensure --capability image
+```
+
+后续可使用 noxgate auth status、list、use work、logout（删除本地凭据）、revoke（撤销远端并删除本地）。通过 NOXGATE_PROFILE 或 auth --profile 选择 profile。首次授权打开 NoxGate 登录页，用户在网页选择或创建 API Key，运行时自动安全保存凭据。
+
+首次授权必须在本机打开浏览器并登录 NoxGate，选择自己的 API Key 后批准；CLI 自动接收授权结果并保存独立插件凭据。无本机浏览器时，请稍后在可打开浏览器的本机运行 `noxgate auth login`；没有设备码、手工代码或服务端轮询流程。禁止 Agent 读取配置目录、钥匙串、原始密钥或授权秘密，禁止把认证头写入请求文件。默认凭据保存在用户配置目录私有 `file` 后端；只有显式选择 `--store system` 才使用系统安全存储，并需先安装 `--system-keyring` 依赖。`portable-env` 仅接受用户指定的绝对 `.env` 路径，以明文保存插件凭据并在 status 中警告。WorkBuddy 等 Agent 尚未完成真实宿主验证，不宣称已适配。
+
+
 
 # NoxGate 图片生成
 
-当请求的主要结果是图片文件时，直接调用本 skill 的脚本生成图片。不要只给提示词、示例代码或绘图库结果。图片编辑请求使用 `edit`，提供参考图；其他图像创作请求使用 `generate`。即使请求出现在游戏或代码项目中，只要用户要的是图片文件，也调用图片接口；用户要求把素材批量纳入游戏资产流水线且已安装游戏资产插件时，让 `gpt-image-2-5-game-assets` 负责清单、批次和验收，它的生成脚本同样使用 Codex provider 认证。
+当请求的主要结果是图片文件时，直接调用本 skill 的脚本生成图片。不要只给提示词、示例代码或绘图库结果。图片编辑请求使用 `edit`，提供参考图；其他图像创作请求使用 `generate`。即使请求出现在游戏或代码项目中，只要用户要的是图片文件，也调用图片接口；用户要求把素材批量纳入游戏资产流水线且已安装游戏资产插件时，让 `gpt-image-2-5-game-assets` 负责清单、批次和验收，它的生成脚本同样使用 独立 NoxGate 认证。
 
 ## 多素材的生成方式
 
@@ -17,9 +32,9 @@ description: 必须用于任何用户希望生成、绘制、创作、重绘或�
 
 ## 认证与模型
 
-- 脚本从 `$CODEX_HOME/config.toml`（未设置时 `~/.codex/config.toml`）读取 `model_provider`，再读取对应 `[model_providers.<name>]` 的 `base_url`。
-- 认证优先使用 provider 的 `experimental_bearer_token`；若该字段为空，则按 `env_key` 从环境变量读取。不要显示、复制、记录或写入图片元数据中的 token。
-- 默认模型为 `gpt-image-2.5-flare`。需要更高质量、角色一致性或参考图编辑时使用 `gpt-image-2.5-sunburst`。它们是本包推荐的默认模型；用户指定其他模型时，先核对当前 provider 的模型权限与参数。
+- 图片脚本通过共享认证运行时读取当前 NoxGate profile，在进程内获得独立插件凭据。首次调用自动打开浏览器授权。
+- 仅显式运行 noxgate auth import-codex 才读取旧配置中的公开网关地址；不会复制旧 API Key，仍须在网页重新选择 Key 授权。
+- 默认模型为 `gpt-image-2.5-flare`。需要更高质量、角色一致性或参考图编辑时使用 `gpt-image-2.5-sunburst`。它们是本包推荐的默认模型；用户指定其他模型时，先核对当前绑定 API Key 的模型权限与参数。
 - 使用非流式请求：生成向 `POST /images/generations` 发送 JSON，编辑向 `POST /images/edits` 发送 multipart。脚本优先请求 `b64_json`，也能保存 URL 返回的图片，并支持异步任务轮询。要求 Python 3.11+。
 - 按上述分组方式提交所需的源图张数，单图请求默认一张，最终素材数量仍按用户要求。提交超时或结果不明时，报告错误，不自动重新提交付费请求。
 
@@ -54,6 +69,6 @@ python3 "$SKILL_DIR/scripts/noxgate_image.py" edit \
 
 ## 插件中的路径和恢复
 
-从当前加载的 `SKILL.md` 位置解析 `scripts/`；不要假设插件的缓存目录。脚本从相对插件路径载入内置运行库，支持包含空格的安装路径。用户配置保持在 `$CODEX_HOME`，清单、状态和产物放在项目或临时目录。
+从当前加载的 `SKILL.md` 位置解析 `scripts/`；不要假设插件的缓存目录。脚本从相对插件路径载入内置运行库，支持包含空格的安装路径。profile 配置和默认私有文件凭据位于跨平台用户配置目录，可由 `NOXGATE_HOME` 覆盖；也可显式选择系统安全存储或 `portable-env`。清单、状态和产物放在项目或临时目录。
 
 每次生成或编辑都会保存 `<output>.task.json`。超时、下载失败时用 `resume --state /absolute/path/output.png.task.json` 恢复同一任务；提交结果未知时先检查网关记录，不删除状态后自动重生。

@@ -3,6 +3,21 @@ name: gpt-image-2-5-game-assets
 description: 使用 GPT-Image-2.5 Sunburst/Flare 经 NoxGate 生成游戏美术，支持同类多素材组合图的拆分、色键去背景、独立资产校验与断点续跑，也支持逐帧源图组装为 sprite sheet 和 JSON 帧表；不生成视频。
 ---
 
+## 独立认证（首次使用必须执行）
+
+从当前 SKILL.md 向上两级得到插件根目录。首次安装独立 CLI 和游戏图像依赖；默认 `file` 后端无需额外认证依赖：
+
+```bash
+python3 "/absolute/path/to/plugin/bin/install.py" --game-assets
+python3 "/absolute/path/to/plugin/bin/noxgate" auth ensure --capability image
+```
+
+后续可使用 noxgate auth status、list、use work、logout（删除本地凭据）、revoke（撤销远端并删除本地）。通过 NOXGATE_PROFILE 或 auth --profile 选择 profile。首次授权打开 NoxGate 登录页，用户在网页选择或创建 API Key，运行时自动安全保存凭据。
+
+首次授权必须在本机打开浏览器并登录 NoxGate，选择自己的 API Key 后批准；CLI 自动接收授权结果并保存独立插件凭据。无本机浏览器时，请稍后在可打开浏览器的本机运行 `noxgate auth login`；没有设备码、手工代码或服务端轮询流程。禁止 Agent 读取配置目录、钥匙串、原始密钥或授权秘密，禁止把认证头写入请求文件。默认凭据保存在用户配置目录私有 `file` 后端；只有显式选择 `--store system` 才使用系统安全存储，并需先安装 `--system-keyring` 依赖。`portable-env` 仅接受用户指定的绝对 `.env` 路径，以明文保存插件凭据并在 status 中警告。WorkBuddy 等 Agent 尚未完成真实宿主验证，不宣称已适配。
+
+
+
 # GPT Image 2.5 游戏素材
 
 在项目中生产素材时，先读取该项目的资产清单、视觉规范与验收要求；不要把其他项目的素材、约定或参考资料带入当前项目。本 skill 本身只包含通用工作流。
@@ -10,8 +25,8 @@ description: 使用 GPT-Image-2.5 Sunburst/Flare 经 NoxGate 生成游戏美术�
 ## 模型与接口
 
 - `gpt-image-2.5-flare`：快速探索、批量候选；`gpt-image-2.5-sunburst`：定稿、参考图编辑与角色一致性要求高的资产。
-- NoxGate 的这两个模型 ID 必须带 `-flare` 或 `-sunburst`。使用当前 Codex 已配置的 provider 和认证，不要求单独填写或保存连接凭据。
-- 仅允许 `gpt-image-2.5-flare` 和 `gpt-image-2.5-sunburst`。脚本从 Codex 当前 provider 配置中读取运行所需的连接信息；不得打印、复制到 manifest 或产物元数据。
+- NoxGate 的这两个模型 ID 必须带 `-flare` 或 `-sunburst`。通过浏览器登录 NoxGate、选择 API Key 授权，不手工复制密钥。
+- 仅允许 `gpt-image-2.5-flare` 和 `gpt-image-2.5-sunburst`。脚本从 NoxGate profile 与当前选定的凭据存储获取认证；不得打印、复制到 manifest 或产物元数据。
 - 网关的 `POST /images/generations` 可同步返回图片，也可返回任务 ID；异步任务由 `GET /images/generations/{task_id}` 查询。参考图使用上游可访问的 HTTPS URL。不要假设本地文件路径能直接当 `image_urls`。
 
 ## 生产流程
@@ -51,7 +66,7 @@ python3 scripts/asset_batch.py plan --manifest /absolute/path/assets.json
 python3 scripts/asset_batch.py run --manifest /absolute/path/assets.json --output-dir /absolute/path/generated --max-new-tasks 4
 ```
 
-manifest 格式按下方命令和脚本的 `--help` 创建；项目专属的资产范围、风格及验收标准应来自当前项目自身的资料。脚本要求 Python 3.11+ 和 Pillow；组合图拆分另需 NumPy。`--config` 仅供隔离测试或兼容配置使用，默认沿用当前 Codex 配置。脚本只处理静态 PNG/JPEG/WebP。输出目录含素材、状态文件和需要人工检查的原图；不要把生成目录误当成已验收资产目录。
+manifest 格式按下方命令和脚本的 `--help` 创建；项目专属的资产范围、风格及验收标准应来自当前项目自身的资料。脚本要求 Python 3.11+ 和 Pillow；组合图拆分另需 NumPy。使用 --profile 选择独立 profile；不再支持 --config 或静默 Codex 回退。脚本只处理静态 PNG/JPEG/WebP。输出目录含素材、状态文件和需要人工检查的原图；不要把生成目录误当成已验收资产目录。
 
 ## 插件路径与依赖
 

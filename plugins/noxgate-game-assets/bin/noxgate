@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Standalone plugin CLI, usable before installation via python3 bin/noxgate."""
+import os
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[1]
+library = root / "lib" if (root / "lib/noxgate_auth.py").is_file() else root
+if root.name == "cli":
+    os.environ.setdefault("NOXGATE_HOME", str(root.parent))
+sys.path.insert(0, str(library))
+from noxgate_credentials import config_home
+
+venv = config_home() / "venv"
+python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+if python.is_file() and Path(sys.prefix).resolve() != venv.resolve():
+    os.execv(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
+from noxgate_auth import cli
+
+raise SystemExit(cli())

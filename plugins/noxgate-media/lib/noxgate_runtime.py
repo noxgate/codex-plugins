@@ -6,15 +6,23 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+# Media entry points also use the isolated CLI environment created by install.py.
+from noxgate_credentials import config_home
+
+_venv = config_home() / "venv"
+_python = _venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+if _python.is_file() and Path(sys.prefix).resolve() != _venv.resolve() and os.environ.get("NOXGATE_NO_REEXEC") != "1":
+    os.execv(str(_python), [str(_python), *sys.argv])
 
 ENDPOINTS = {"image": "images/generations", "audio": "audio/speech", "video": "videos/generations"}
 SUCCESS = {"succeeded", "completed"}
@@ -26,37 +34,19 @@ class MediaError(Exception):
     pass
 
 
-def config_path() -> Path:
-    return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser() / "config.toml"
-
-
-def load_provider(path: Path | None = None) -> tuple[str, str]:
-    path = path or config_path()
+def load_provider(path: Path | None = None, capability: str = "image") -> tuple[str, str]:
+    if path is not None:
+        raise MediaError("不再读取 Codex 配置；请显式运行 noxgate auth import-codex")
     try:
-        config = tomllib.loads(path.expanduser().read_text(encoding="utf-8"))
-        profile = config.get("profiles", {}).get(config.get("profile"), {})
-        name = profile.get("model_provider", config.get("model_provider"))
-        provider = config["model_providers"][name]
-        address = provider["base_url"]
-        if not isinstance(address, str):
-            raise ValueError()
-        address = address.rstrip("/")
-        validate_url(address)
-        token = provider.get("experimental_bearer_token")
-        if not token and provider.get("env_key"):
-            token = os.environ.get(provider["env_key"])
-        if not token and provider.get("requires_openai_auth"):
-            token = os.environ.get("OPENAI_API_KEY")
-            if not token:
-                auth = json.loads((path.parent / "auth.json").read_text(encoding="utf-8"))
-                token = auth.get("OPENAI_API_KEY")
-        if not isinstance(token, str) or not token.strip():
-            raise MediaError("当前 Codex provider 缺少可读取的 API 凭据；请检查其 bearer token 或 env_key 配置")
-        return address, token.strip()
-    except MediaError:
-        raise
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        raise MediaError("无法读取当前 Codex provider 配置；请先完成 Codex 接入配置") from None
+        from noxgate_auth import ensure
+        return ensure(capability)
+    except Exception as exc:
+        if isinstance(exc, MediaError):
+            raise
+        from noxgate_auth import AuthError, CredentialError
+        if isinstance(exc, (AuthError, CredentialError)):
+            raise MediaError(str(exc)) from None
+        raise MediaError("NoxGate 认证未完成；请运行插件 bin/noxgate auth login，并在浏览器授权") from None
 
 
 def validate_url(url: str) -> None:
@@ -76,7 +66,7 @@ class SafeRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         validate_url(newurl)
         if req.get_method() not in {"GET", "HEAD"}:
-            raise MediaError("生成请求发生重定向，已停止；请检查当前 provider 的地址")
+            raise MediaError("生成请求发生重定向，已停止；请检查当前 NoxGate profile 的地址")
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected is not None and origin(req.full_url) != origin(newurl):
             redirected.remove_header("Authorization")
@@ -137,6 +127,9 @@ def atomic_write(path: Path, raw: bytes) -> None:
 
 
 def save_state(path: Path, value: dict, token: str = "") -> None:
+    # Never persist untrusted provider responses, signed URLs, headers or bodies.
+    if "fingerprint" in value and ("kind" in value or "asset_id" in value):
+        value = {k: v for k, v in value.items() if k in {"schemaVersion", "kind", "model", "status", "fingerprint", "output", "provider_hash", "profile", "task_id", "files", "recovery_id", "asset_id", "dimensions"}}
     encoded = json.dumps(value, ensure_ascii=False, indent=2)
     if token:
         encoded = encoded.replace(token, "[已隐藏]")
@@ -147,7 +140,7 @@ def result_items(kind: str, value: dict) -> list[dict]:
     if kind == "image":
         items = value.get("data")
     elif kind == "audio":
-        items = value.get("audios")
+        items = value.get("audios") or value.get("data")
     else:
         item = value.get("result")
         items = [item] if isinstance(item, dict) else None
@@ -222,8 +215,8 @@ def wait_for_result(base: str, token: str, kind: str, result: dict, state: dict,
             raise MediaError(f"任务以 {status} 状态结束；不会自动重生")
         if status in SUCCESS or (not status and result_items(kind, result)):
             return result
-        task_id = result.get("id") or state.get("task_id")
-        if not isinstance(task_id, str) or not task_id:
+        task_id = result.get("id") or result.get("task_id") or state.get("task_id")
+        if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", task_id):
             raise MediaError("异步响应缺少任务 ID；请检查网关记录，不要重新提交")
         state.update(status="pending", task_id=task_id, result=result)
         save_state(state_path, state, token)
@@ -235,11 +228,51 @@ def wait_for_result(base: str, token: str, kind: str, result: dict, state: dict,
         interval = min(interval * 1.3, 15)
 
 
+def cache_result(state: dict, state_path: Path, kind: str, result: dict, base: str, token: str) -> dict:
+    from noxgate_recovery import RecoveryError, RecoveryMissing, discard, recover, stage
+    from noxgate_credentials import CredentialError
+    try:
+        if state.get("recovery_id"):
+            try:
+                return recover(state, kind, lambda url: download_bytes({"url": url}, base, token))
+            except RecoveryMissing:
+                if not state.get("task_id") or not result_items(kind, result):
+                    raise
+                state.pop("recovery_id", None)
+        parts = result_items(kind, result)
+        for part in parts:
+            if part.get("url"):
+                part["url"] = urllib.parse.urljoin(base + "/", part["url"])
+                validate_url(part["url"])
+        # Async URLs can be fetched again via the task ID; keep only bytes.
+        # Read-only injected credentials can download directly but cannot journal URLs.
+        from noxgate_auth import get_profile
+        read_only_store = False
+        if not state.get("task_id") and any(part.get("url") for part in parts):
+            _, profile = get_profile(state["profile"])
+            read_only_store = profile.get("store", "file") in {"env", "portable-env"}
+        if state.get("task_id") or read_only_store:
+            parts = [{"b64_json": base64.b64encode(download_bytes(part, base, token)).decode()} for part in parts]
+        identifier = stage(state, kind, parts)
+        state["recovery_id"] = identifier
+        try:
+            save_state(state_path, state, token)
+        except BaseException:
+            state.pop("recovery_id", None)
+            discard(identifier)
+            raise
+        return recover(state, kind, lambda url: download_bytes({"url": url}, base, token))
+    except RecoveryMissing:
+        raise
+    except (RecoveryError, CredentialError) as exc:
+        raise MediaError(str(exc)) from None
+
+
 def generate(kind: str, payload: dict, output: Path, state_path: Path, *, timeout: float = 900,
              interval: float = 2, body: bytes | None = None, content_type: str = "application/json",
              endpoint: str | None = None, provider: tuple[str, str] | None = None) -> list[str]:
     validate_payload(payload, kind)
-    base, token = provider or load_provider()
+    base, token = provider or load_provider(capability=kind)
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode() + (body or b"")).hexdigest()
     if state_path.exists():
         state = json_object(state_path.read_bytes())
@@ -248,7 +281,8 @@ def generate(kind: str, payload: dict, output: Path, state_path: Path, *, timeou
         return resume(state_path, output=output, timeout=timeout, interval=interval, provider=(base, token))
     state = {"schemaVersion": 1, "kind": kind, "model": payload.get("model"), "status": "submitting",
              "fingerprint": digest, "output": str(output.resolve()),
-             "provider_hash": hashlib.sha256(base.encode()).hexdigest()}
+             "provider_hash": hashlib.sha256(base.encode()).hexdigest(),
+             "profile": __import__("noxgate_auth").profile_name()}
     # Exclusive reservation prevents two processes from submitting the same job.
     state_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -260,38 +294,145 @@ def generate(kind: str, payload: dict, output: Path, state_path: Path, *, timeou
                         body=body if body is not None else json.dumps(payload, ensure_ascii=False).encode(),
                         content_type=content_type, timeout=300)
     if mime != "application/json" and not mime.endswith("+json"):
-        # Persist the sync response before validation/download so failures never trigger a new POST.
+        # Extract media bytes; the private journal persists them before output writes.
         result = {"b64_json": base64.b64encode(raw).decode(), "status": "succeeded"}
     else:
         result = json_object(raw)
-    state.update(status="received", result=result, task_id=result.get("id"))
+    task_id = result.get("id") or result.get("task_id")
+    if task_id is not None and (not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", task_id)):
+        raise MediaError("任务 ID 格式无效；请检查网关记录，不会重新提交")
+    state.update(status="received", result=result, task_id=task_id)
     save_state(state_path, state, token)
-    return resume(state_path, output=output, timeout=timeout, interval=interval, provider=(base, token))
+    result = wait_for_result(base, token, kind, result, state, state_path, timeout, interval)
+    result = cache_result(state, state_path, kind, result, base, token)
+    paths = save_outputs(kind, result, base, token, output)
+    state.update(status="completed", files=paths)
+    save_state(state_path, state, token)
+    return paths
 
 
 def resume(state_path: Path, *, output: Path | None = None, timeout: float = 900, interval: float = 2,
            provider: tuple[str, str] | None = None) -> list[str]:
-    base, token = provider or load_provider()
     state = json_object(state_path.read_bytes())
-    if state.get("provider_hash") != hashlib.sha256(base.encode()).hexdigest():
-        raise MediaError("当前 provider 地址与提交任务时不同；请切回原配置后继续")
     kind = state.get("kind")
     if kind not in ENDPOINTS:
         raise MediaError("无法识别的任务状态文件")
+    from noxgate_auth import profile_name
+    if "profile" not in state:
+        raise MediaError("旧任务需要显式迁移：noxgate tasks migrate-state --state PATH --profile NAME")
+    if state.get("profile") != profile_name():
+        raise MediaError("任务 profile 不一致；请切回原 profile")
+    base, token = provider or load_provider(capability=kind)
+    if state.get("provider_hash") != hashlib.sha256(base.encode()).hexdigest():
+        raise MediaError("当前 NoxGate profile 地址与提交任务时不同；请切回原配置后继续")
     if state.get("status") == "submitting":
         raise MediaError("提交结果未知；请先检查网关记录，不能自动重新提交")
-    if state.get("status") == "completed" and output is None:
+    if state.get("status") == "completed" and (output is None or str(output.resolve()) == state.get("output")):
         paths = state.get("files", [])
         if paths and all(Path(p).is_file() for p in paths):
             return paths
         # Redownload saved results without creating a new paid task.
-    result = wait_for_result(base, token, kind, state.get("result", {}), state, state_path, timeout, interval)
-    state.update(status="received", result=result)
-    save_state(state_path, state, token)
+    result = None
+    if state.get("recovery_id"):
+        from noxgate_recovery import RecoveryMissing, recover
+        try:
+            result = recover(state, kind, lambda url: download_bytes({"url": url}, base, token))
+        except RecoveryMissing:
+            if not state.get("task_id"):
+                raise MediaError("同步媒体缓存已丢失；不会自动重新提交付费任务") from None
+            state.pop("recovery_id", None)
+        except Exception as exc:
+            from noxgate_recovery import RecoveryError
+            from noxgate_credentials import CredentialError
+            if isinstance(exc, (RecoveryError, CredentialError)):
+                raise MediaError(str(exc)) from None
+            raise
+    if result is None:
+        if not state.get("task_id"):
+            raise MediaError("该旧同步任务没有恢复缓存；请检查已有文件或网关记录，不会重新提交付费请求")
+        result = request_json(task_url(base, kind, state["task_id"], state.get("model", "")), token)
+        result = wait_for_result(base, token, kind, result, state, state_path, timeout, interval)
+        state.update(status="received")
+        save_state(state_path, state, token)
+        result = cache_result(state, state_path, kind, result, base, token)
     paths = save_outputs(kind, result, base, token, output or Path(state["output"]))
     state.update(status="completed", files=paths)
     save_state(state_path, state, token)
     return paths
+
+
+def migrate_state(state_path: Path, name: str, *, source_gateway: str | None = None, asset_root: Path | None = None) -> None:
+    """Explicitly adopt legacy metadata; online tasks are authorized by the gateway."""
+    from noxgate_auth import ensure, get_profile, profile_name, validate_address
+    from noxgate_credentials import storage_lock
+    name = profile_name(name)
+    _, profile = get_profile(name)
+    base = validate_address(profile["gateway"])
+    state = json_object(state_path.read_bytes())
+    snapshot = dict(state)
+    if state.get("profile"):
+        raise MediaError("状态已绑定 profile；不能通过迁移重新绑定")
+    is_asset = "asset_id" in state
+    kind = "image" if is_asset else state.get("kind")
+    if kind not in ENDPOINTS or not isinstance(state.get("fingerprint"), str):
+        raise MediaError("无法识别的旧任务状态")
+    if state.get("status") == "submitting":
+        raise MediaError("提交结果未知；请先检查网关记录，不能迁移或重新提交")
+    gateway_hash = hashlib.sha256(base.encode()).hexdigest()
+    if state.get("provider_hash"):
+        if state["provider_hash"] != gateway_hash:
+            raise MediaError("旧任务网关与目标 profile 不一致")
+    elif not is_asset or not source_gateway or validate_address(source_gateway) != base:
+        raise MediaError("旧游戏资产缺少网关指纹；请显式指定与目标 profile 一致的 --source-gateway")
+    result = None
+    files = state.get("files", [])
+    if is_asset:
+        expected_root = state_path.resolve().parent.parent
+        if asset_root is None or asset_root.expanduser().resolve() != expected_root:
+            raise MediaError("游戏资产迁移必须显式指定状态 _state 目录对应的 --asset-root")
+        root = asset_root.expanduser().resolve()
+        paths = [root / path for path in files]
+        if any(not path.resolve().is_relative_to(root) for path in paths):
+            raise MediaError("旧资产文件路径超出资产目录")
+    else:
+        paths = [Path(path).expanduser() for path in files]
+    offline_complete = state.get("status") in {"completed", "needs_review"} and bool(paths) and all(path.is_file() for path in paths)
+    # Do not trust a legacy URL/body; only extract media bytes from a local sync result.
+    previous = state.get("result")
+    local_parts = result_items(kind, previous) if isinstance(previous, dict) else []
+    local_media = bool(local_parts) and all(isinstance(part.get("b64_json"), str) for part in local_parts)
+    if not offline_complete and not local_media:
+        task_id = state.get("task_id")
+        if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", task_id):
+            raise MediaError("旧任务没有可恢复媒体或任务 ID；无法安全迁移，不会重新提交")
+        authenticated_base, token = ensure(kind, name)
+        if authenticated_base != base:
+            raise MediaError("迁移期间 profile 网关发生变化")
+        # The server checks user Token ownership, media capability and current model rights.
+        result = request_json(task_url(base, kind, task_id, state.get("model", "")), token)
+        if not state.get("model") and isinstance(result.get("model"), str):
+            state["model"] = result["model"]
+    allowed = {"schemaVersion", "kind", "model", "status", "fingerprint", "output", "provider_hash", "task_id", "files", "asset_id", "dimensions"}
+    clean = {k: v for k, v in state.items() if k in allowed}
+    clean.update(schemaVersion=2, profile=name, provider_hash=gateway_hash)
+    with storage_lock("task-migration"):
+        current = json_object(state_path.read_bytes())
+        if current != snapshot:
+            raise MediaError("迁移期间任务状态已变化；请重新检查")
+        identifier = None
+        if local_media and not offline_complete:
+            from noxgate_recovery import RecoveryError, discard, stage
+            try:
+                identifier = stage(clean, kind, local_parts)
+            except RecoveryError as exc:
+                raise MediaError(str(exc)) from None
+            clean.update(recovery_id=identifier, status="received")
+        try:
+            save_state(state_path, clean)
+        except BaseException:
+            if identifier:
+                discard(identifier)
+            raise
 
 
 def validate_payload(value: dict, kind: str) -> dict:
@@ -317,7 +458,7 @@ def validate_payload(value: dict, kind: str) -> dict:
             if not isinstance(urls, list) or any(not isinstance(url, str) or not url.startswith("https://") for url in urls):
                 raise MediaError("视频参考媒体必须是上游可访问的 HTTPS URL")
     if any(key in value for key in ("api_key", "base_url", "token", "authorization")):
-        raise MediaError("请求文件不得包含连接地址或凭据；使用当前 Codex 配置")
+        raise MediaError("请求文件不得包含连接地址或凭据；使用独立 NoxGate profile")
     return value
 
 
@@ -356,7 +497,7 @@ def cli(kind: str) -> int:
                 paths = resume(args.state, output=args.output, timeout=args.timeout, interval=args.poll_interval)
             print("\n".join(paths))
         else:
-            base, token = load_provider()
+            base, token = load_provider(capability=kind)
             if args.command == "models":
                 value = request_json(base + "/models", token)
                 for model in value.get("data", []):

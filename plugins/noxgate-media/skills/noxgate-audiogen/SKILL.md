@@ -1,7 +1,22 @@
 ---
 name: noxgate-audiogen
-description: 当用户希望生成音乐、战斗音乐、音效、环境音或语音时，通过当前 Codex provider 的 NoxGate 音频接口实际生成音频文件。
+description: 当用户希望生成音乐、战斗音乐、音效、环境音或语音时，通过独立 NoxGate profile 的 音频接口实际生成音频文件。
 ---
+
+## 独立认证（首次使用必须执行）
+
+从当前 SKILL.md 向上两级得到插件根目录。首次安装独立 CLI；默认 `file` 后端无需额外认证依赖：
+
+```bash
+python3 "/absolute/path/to/plugin/bin/install.py"
+python3 "/absolute/path/to/plugin/bin/noxgate" auth ensure --capability audio
+```
+
+后续可使用 noxgate auth status、list、use work、logout（删除本地凭据）、revoke（撤销远端并删除本地）。通过 NOXGATE_PROFILE 或 auth --profile 选择 profile。首次授权打开 NoxGate 登录页，用户在网页选择或创建 API Key，运行时自动安全保存凭据。
+
+首次授权必须在本机打开浏览器并登录 NoxGate，选择自己的 API Key 后批准；CLI 自动接收授权结果并保存独立插件凭据。无本机浏览器时，请稍后在可打开浏览器的本机运行 `noxgate auth login`；没有设备码、手工代码或服务端轮询流程。禁止 Agent 读取配置目录、钥匙串、原始密钥或授权秘密，禁止把认证头写入请求文件。默认凭据保存在用户配置目录私有 `file` 后端；只有显式选择 `--store system` 才使用系统安全存储，并需先安装 `--system-keyring` 依赖。`portable-env` 仅接受用户指定的绝对 `.env` 路径，以明文保存插件凭据并在 status 中警告。WorkBuddy 等 Agent 尚未完成真实宿主验证，不宣称已适配。
+
+
 
 # NoxGate 音频生成
 
@@ -17,7 +32,7 @@ python3 "$SKILL_DIR/scripts/noxgate_audio.py" generate \
   --output /tmp/noxgate-audio.mp3
 ```
 
-请求至少包含 `model` 和 `input` 或 `prompt`。可按模型支持情况提供 `voice`、`format`、`sample_rate`、`instrumental`、`style`、`title`、`duration`、`negative_tags` 等字段。脚本读取当前 Codex provider、保存任务状态、处理异步轮询并下载结果；超时后使用 `resume --state`，不要重复付费提交。
+请求至少包含 `model` 和 `input` 或 `prompt`。可按模型支持情况提供 `voice`、`format`、`sample_rate`、`instrumental`、`style`、`title`、`duration`、`negative_tags` 等字段。脚本读取独立 NoxGate profile、保存任务状态、处理异步轮询并下载结果；超时后使用 `resume --state`，不要重复付费提交。
 
 模型应从 `models` 命令返回的当前账户模型 ID 和 NoxGate 模型能力说明中选择；可见不代表支持所有字段。不要未经用户同意将所需时长、带声音视频或参考媒体降级为另一种结果。参考输入必须是上游可访问的 HTTPS URL；本地文件不能当 URL，未经授权不要上传到第三方托管。
 

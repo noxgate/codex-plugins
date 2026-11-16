@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate/edit images with the active Codex provider; supports resumable tasks."""
+"""Generate/edit images with the independent NoxGate profile; supports resumable tasks."""
 from __future__ import annotations
 import argparse
 import hashlib

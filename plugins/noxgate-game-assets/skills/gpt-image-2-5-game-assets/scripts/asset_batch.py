@@ -13,7 +13,6 @@ import re
 import sys
 import tempfile
 import time
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,7 +21,8 @@ from pathlib import Path
 from typing import Any
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "lib" if (PLUGIN_ROOT / "lib/noxgate_runtime.py").is_file() else PLUGIN_ROOT.parent / "shared"))
-from noxgate_runtime import MediaError, load_provider, request_json as media_request_json, download_bytes
+from noxgate_runtime import MediaError, load_provider, request_json as media_request_json, download_bytes, cache_result, save_state as safe_save_state
+from noxgate_auth import profile_name
 
 try:
     from PIL import Image, ImageOps, UnidentifiedImageError
@@ -30,8 +30,6 @@ except ImportError as exc:
     raise SystemExit("Pillow is required: install it in the selected Python environment") from exc
 
 
-CODEX_HOME = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser()
-DEFAULT_CONFIG = CODEX_HOME / "config.toml"
 MODELS = {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}
 FORMATS = {"png": "PNG", "jpeg": "JPEG", "webp": "WEBP"}
 ASSET_ID = re.compile(r"^[a-z][a-z0-9_-]{1,79}$")
@@ -63,8 +61,10 @@ def dimensions(value: str) -> tuple[int, int]:
     return result
 
 
-def load_config(path: Path) -> tuple[str, str, set[str]]:
-    base, key = load_provider(path)
+def load_config(path: Path | None = None) -> tuple[str, str, set[str]]:
+    if path is not None:
+        raise AssetError("不再支持 Codex provider 配置；请使用 NoxGate profile")
+    base, key = load_provider(capability="image")
     return base, key, MODELS
 
 
@@ -128,18 +128,10 @@ def fingerprint(item: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def atomic_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".state-", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+def atomic_json(path: Path, value: dict) -> None:
+    if "fingerprint" in value:
+        value = {k: v for k, v in value.items() if k in {"asset_id", "fingerprint", "status", "task_id", "files", "dimensions", "profile", "provider_hash", "model", "recovery_id"}}
+    safe_save_state(path, value)
 
 
 def request_json(method: str, url: str, key: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -219,6 +211,7 @@ def write_image(path: Path, content: bytes) -> None:
 
 
 def finish_asset(item: dict[str, Any], result: dict[str, Any], output_dir: Path, state_path: Path, state: dict[str, Any], base_url: str, key: str) -> str:
+    result = cache_result(state, state_path, "image", result, base_url, key)
     parts = image_data(result)
     if len(parts) != item["n"]:
         raise AssetError(f"expected {item['n']} images, received {len(parts)}")
@@ -248,25 +241,36 @@ def finish_asset(item: dict[str, Any], result: dict[str, Any], output_dir: Path,
 def run_one(item: dict[str, Any], output_dir: Path, base_url: str, key: str, poll_interval: float, timeout: float, may_submit: bool) -> str:
     state_path = output_dir / "_state" / f"{item['id']}.json"
     digest = fingerprint(item)
+    gateway_hash = hashlib.sha256(base_url.encode()).hexdigest()
     if state_path.exists():
         state = json.loads(state_path.read_text(encoding="utf-8"))
+        if "profile" not in state:
+            raise AssetError("旧任务需要显式迁移：noxgate tasks migrate-state --state PATH --profile NAME")
+        if state.get("profile") != profile_name() or state.get("provider_hash") != gateway_hash:
+            raise AssetError("任务 profile 或网关与当前配置不一致")
         if state.get("fingerprint") != digest:
             raise AssetError("manifest changed for an existing asset; use a new ID or review its state")
         if state.get("status") in {"completed", "needs_review"}:
             if all((output_dir / path).is_file() for path in state.get("files", [])) and state.get("files"):
                 return state["status"]
             raise AssetError("previous output is missing; inspect state before resubmitting")
-        if state.get("status") == "received" and state.get("result"):
-            return finish_asset(item, state["result"], output_dir, state_path, state, base_url, key)
+        if state.get("recovery_id"):
+            from noxgate_recovery import RecoveryMissing
+            try:
+                return finish_asset(item, {}, output_dir, state_path, state, base_url, key)
+            except RecoveryMissing:
+                if not state.get("task_id"):
+                    raise AssetError("同步媒体缓存已丢失；不会自动重新提交付费任务") from None
+                state.pop("recovery_id", None)
         if state.get("status") == "submitting":
             raise AssetError("submission outcome unknown; inspect gateway before retrying")
-        if state.get("status") != "pending" or not state.get("task_id"):
+        if state.get("status") not in {"pending", "received"} or not state.get("task_id"):
             raise AssetError("unrecognized saved task state")
         result = wait_for_result(base_url, key, state["task_id"], poll_interval, timeout)
         return finish_asset(item, result, output_dir, state_path, state, base_url, key)
     if not may_submit:
         return "not_submitted"
-    state = {"asset_id": item["id"], "fingerprint": digest, "status": "submitting"}
+    state = {"asset_id": item["id"], "fingerprint": digest, "status": "submitting", "profile": profile_name(), "provider_hash": gateway_hash, "model": item["model"]}
     atomic_json(state_path, state)
     fields = ("model", "prompt", "size", "resolution", "quality", "background", "output_format", "n", "image_urls", "mask_url")
     payload = {field: item[field] for field in fields if field in item}
@@ -280,12 +284,12 @@ def run_one(item: dict[str, Any], output_dir: Path, base_url: str, key: str, pol
         atomic_json(state_path, state)
         raise AssetError(f"gateway rejected task with status {status}")
     if status not in {None, "succeeded", "completed"}:
-        if not isinstance(result.get("id"), str) or not result["id"]:
+        if not isinstance(result.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", result["id"]):
             raise AssetError("asynchronous response has no task ID")
         state.update(status="pending", task_id=result["id"])
         atomic_json(state_path, state)
         result = wait_for_result(base_url, key, result["id"], poll_interval, timeout)
-    state.update(status="received", result=result)
+    state.update(status="received")
     atomic_json(state_path, state)
     return finish_asset(item, result, output_dir, state_path, state, base_url, key)
 
@@ -294,19 +298,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("plan", "run"))
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--profile")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--max-new-tasks", type=int)
     parser.add_argument("--only", action="append", metavar="ASSET_ID", help="process only this asset ID; repeat for multiple IDs")
     parser.add_argument("--poll-interval", type=float, default=3.0)
     parser.add_argument("--poll-timeout", type=float, default=900.0)
     args = parser.parse_args()
+    if args.profile:
+        os.environ["NOXGATE_PROFILE"] = args.profile
     if args.command == "run" and (args.output_dir is None or args.max_new_tasks is None or args.max_new_tasks < 0):
         parser.error("run requires --output-dir and --max-new-tasks >= 0")
     if args.poll_interval <= 0 or args.poll_timeout <= 0:
         parser.error("poll timings must be positive")
     try:
-        base_url, key, configured_models = load_config(args.config)
+        base_url, key, configured_models = ("", "", MODELS) if args.command == "plan" else load_config()
         assets = load_manifest(args.manifest, configured_models)
         if args.only:
             selected = set(args.only)

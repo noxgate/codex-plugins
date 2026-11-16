@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded, resumable game-audio production through the current Codex provider."""
+"""Bounded, resumable game-audio production through the independent NoxGate profile."""
 from __future__ import annotations
 
 import argparse
