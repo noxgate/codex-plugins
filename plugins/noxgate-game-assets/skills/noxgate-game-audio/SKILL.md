@@ -27,7 +27,7 @@ python3 "/absolute/path/to/plugin/bin/noxgate" auth ensure --capability audio
 ```json
 {"assets":[
   {"id":"menu_theme","model":"suno-v6-beta","prompt":"warm strategic menu theme, loopable, no vocals","instrumental":true,"output":"menu_theme.mp3"},
-  {"id":"sword_hit","model":"doubao-seed-audio-2.0","prompt":"short metallic sword impact, clean transient","output":"sword_hit.wav"}
+  {"id":"sword_hit","model":"doubao-seed-audio-1-0","prompt":"short metallic sword impact, clean transient","output":"sword_hit.wav"}
 ]}
 ```
 
