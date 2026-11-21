@@ -10,7 +10,8 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "lib" if (PLUGIN_ROOT / "lib/noxgate_runtime.py").is_file() else PLUGIN_ROOT.parent / "shared"))
-from noxgate_runtime import MediaError, generate, resume, validate_payload, save_state
+from noxgate_runtime import MediaError, generate, missing_model, resume, validate_payload, save_state
+from noxgate_models import listing
 
 AUDIO_FORMATS = {"mp3", "wav", "ogg", "opus", "flac", "aac", "m4a", "pcm"}
 
@@ -25,7 +26,7 @@ def load(path: Path) -> list[dict]:
         if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,79}", item["id"]) or item["id"] in seen:
             raise MediaError("每个资产需要唯一的安全 id（小写字母、数字、下划线或连字符）")
         payload = {k: v for k, v in item.items() if k not in {"id", "output", "kind", "acceptance"}}
-        validate_payload(payload, "audio")
+        validate_payload(payload, "audio", allow_missing_model=True)
         fmt = item.get("format", item.get("response_format", "mp3"))
         if fmt not in AUDIO_FORMATS:
             raise MediaError(f"{item['id']}: 不支持的输出格式")
@@ -69,6 +70,19 @@ def main() -> int:
             if unknown:
                 raise MediaError("找不到指定的资产 id")
             assets = [item for item in assets if item["id"] in args.only]
+        missing = [item for item in assets if missing_model(item)]
+        if missing:
+            groups = {}
+            for item in missing:
+                operation = "tts" if item.get("input") else item.get("kind")
+                if operation not in ("tts", "music", "sound"):
+                    operation = "generate"
+                groups.setdefault(operation, []).append(item["id"])
+            choices = [{**listing("audio", operation, count=len(ids)), "assets": ids}
+                       for operation, ids in groups.items()]
+            print(json.dumps(choices, ensure_ascii=False, indent=2))
+            print("请选择模型后将 ID 写入对应资产的 model 字段", file=sys.stderr)
+            return 2
         if args.command == "plan":
             print(f"assets={len(assets)}")
             for item in assets:

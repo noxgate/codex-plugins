@@ -30,7 +30,11 @@ SCOPES = {"image", "video", "audio", "game-assets"}
 class AuthError(Exception):
     def __init__(self, code: str):
         self.code = code if re.fullmatch(r"[a-zA-Z_]{1,64}", code) else "authorization_failed"
-        super().__init__(f"NoxGate 认证未完成（{self.code}）；请运行 noxgate auth login")
+        if self.code == "requested_capability_not_approved":
+            message = "当前 NoxGate 授权未包含所需权限；如需变更权限或 API Key，请显式执行 auth login"
+        else:
+            message = f"NoxGate 认证未完成（{self.code}）；请检查 auth status，首次授权可运行 auth ensure"
+        super().__init__(message)
 
 
 def validate_address(address: str) -> str:
@@ -265,7 +269,7 @@ def login(name: str, gateway: str, web: str, agent: str, scopes: list[str], back
     if backend == "portable-env" and env_file is None:
         raise AuthError("portable_env_requires_explicit_file")
     store = CredentialStore(backend, env_file)  # Fail before starting if storage unavailable.
-    profile = {"gateway": gateway, "web": web, "agent": agent, "scopes": scopes, "store": backend}
+    profile = {"gateway": gateway, "web": web, "agent": agent, "requested_scopes": scopes, "store": backend}
     if backend == "portable-env":
         profile["env_file"] = str(env_file.expanduser().resolve())
     verifier, challenge = pkce_pair()
@@ -360,6 +364,14 @@ def ensure(capability: str, name: str | None = None, *, gateway: str | None = No
     wanted = set(scopes or []) | {capability}
     if not wanted <= SCOPES:
         raise AuthError("invalid_scope")
+    with storage_lock("authorization-" + name, timeout=620):
+        return _ensure_locked(name, wanted, scopes is not None, gateway=gateway, web=web,
+                              agent=agent, backend=backend, env_file=env_file)
+
+
+def _ensure_locked(name: str, wanted: set[str], explicit_scopes: bool, *, gateway: str | None,
+                   web: str | None, agent: str | None, backend: str | None,
+                   env_file: Path | None) -> tuple[str, str]:
     try:
         _, profile = get_profile(name)
     except AuthError as exc:
@@ -377,27 +389,30 @@ def ensure(capability: str, name: str | None = None, *, gateway: str | None = No
         raise AuthError("env_file_requires_portable_env_store")
     if settings["store"] != "portable-env":
         settings.pop("env_file", None)
-    def authorize(current):
-        requested = sorted(wanted | set((current or {}).get("scopes", [])))
-        return login(name, settings["gateway"], settings["web"], settings["agent"], requested,
-                     settings["store"], env_file=Path(settings["env_file"]) if settings.get("env_file") else None)
-    if profile is None or any(profile.get(k) != v for k, v in settings.items()):
-        profile = authorize(profile)
+    if profile and all(profile.get(k) == v for k, v in settings.items()):
+        token = profile_store(profile).get(storage_key(name, profile))
+        if token and token.startswith("ngp_") and profile.get("expires_at", 0) > time.time():
+            try:
+                info = auth_request(profile["gateway"], "credentials/current", token=token, method="GET")
+            except AuthError as exc:
+                if exc.code not in {"UNAUTHORIZED", "invalid_plugin_credential"}:
+                    raise
+            else:
+                if info.get("profile_name") != name or info.get("id") != profile.get("credential_id"):
+                    raise AuthError("credential_profile_mismatch")
+                granted = set(profile["scopes"]) & set(info.get("scopes", profile["scopes"]))
+                if wanted <= granted:
+                    return profile["gateway"], token
+                if wanted - granted <= set(profile.get("requested_scopes", [])):
+                    raise AuthError("requested_capability_not_approved")
+
+    previous_scopes = set((profile or {}).get("requested_scopes", [])) | set((profile or {}).get("scopes", []))
+    requested = wanted | previous_scopes
+    if not explicit_scopes and (not previous_scopes or not wanted <= previous_scopes):
+        requested |= SCOPES
+    profile = login(name, settings["gateway"], settings["web"], settings["agent"], sorted(requested),
+                    settings["store"], env_file=Path(settings["env_file"]) if settings.get("env_file") else None)
     token = profile_store(profile).get(storage_key(name, profile))
-    if not token or not token.startswith("ngp_") or profile.get("expires_at", 0) <= time.time() or not wanted <= set(profile["scopes"]):
-        profile = authorize(profile)
-        token = profile_store(profile).get(storage_key(name, profile))
-    if not token or not wanted <= set(profile["scopes"]):
-        raise AuthError("requested_capability_not_approved")
-    try:
-        info = auth_request(profile["gateway"], "credentials/current", token=token, method="GET")
-        if info.get("profile_name") != name or info.get("id") != profile.get("credential_id"):
-            raise AuthError("credential_profile_mismatch")
-    except AuthError as exc:
-        if exc.code != "UNAUTHORIZED":
-            raise
-        profile = authorize(profile)
-        token = profile_store(profile).get(storage_key(name, profile))
     if not token or not wanted <= set(profile["scopes"]):
         raise AuthError("requested_capability_not_approved")
     return profile["gateway"], token
@@ -519,9 +534,12 @@ def task_cli() -> int:
 
 
 def cli() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "models":
+        from noxgate_models import cli as model_cli
+        return model_cli()
     if len(sys.argv) > 1 and sys.argv[1] == "tasks":
         return task_cli()
-    parser = argparse.ArgumentParser(prog="noxgate", epilog="存储迁移：noxgate auth migrate-storage --help；旧任务：noxgate tasks migrate-state --help")
+    parser = argparse.ArgumentParser(prog="noxgate", epilog="模型和费率：noxgate models --help。存储迁移：noxgate auth migrate-storage --help。旧任务：noxgate tasks migrate-state --help")
     parser.add_argument("group", choices=["auth"])
     parser.add_argument("command", choices=["login", "ensure", "status", "list", "use", "logout", "revoke", "import-codex", "configure-env", "migrate-storage"])
     parser.add_argument("name", nargs="?")
@@ -553,7 +571,8 @@ def cli() -> int:
                 cfg = tomllib.loads(path.read_text(encoding="utf-8"))
                 selected = cfg.get("profiles", {}).get(cfg.get("profile"), {}).get("model_provider", cfg.get("model_provider"))
                 args.gateway = validate_address(cfg["model_providers"][selected]["base_url"])
-            login(name, args.gateway or DEFAULT_GATEWAY, args.web or DEFAULT_WEB, args.agent or os.environ.get("NOXGATE_AGENT", "generic"), args.scope or sorted(SCOPES), args.store or "file", env_file=args.env_file)
+            with storage_lock("authorization-" + name, timeout=620):
+                login(name, args.gateway or DEFAULT_GATEWAY, args.web or DEFAULT_WEB, args.agent or os.environ.get("NOXGATE_AGENT", "generic"), args.scope or sorted(SCOPES), args.store or "file", env_file=args.env_file)
             print("NoxGate 授权已保存：" + name)
         elif args.command == "ensure":
             ensure(args.capability, name, gateway=args.gateway, web=args.web, agent=args.agent, backend=args.store, env_file=args.env_file, scopes=args.scope)

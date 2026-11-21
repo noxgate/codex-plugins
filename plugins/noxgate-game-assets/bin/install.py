@@ -26,7 +26,7 @@ home = _private_dir(Path(os.path.abspath(args.home.expanduser())))
 target = home / "cli"
 _private_dir(target)
 _private_dir(target / "lib")
-for name in ("noxgate_auth.py", "noxgate_credentials.py", "noxgate_runtime.py", "noxgate_recovery.py"):
+for name in ("noxgate_auth.py", "noxgate_credentials.py", "noxgate_runtime.py", "noxgate_recovery.py", "noxgate_models.py"):
     library = source / "lib" if (source / "lib").is_dir() else source
     shutil.copy2(library / name, target / "lib" / name)
 _private_dir(target / "bin")

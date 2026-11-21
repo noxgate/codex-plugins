@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import re
 import stat
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -127,7 +129,7 @@ def atomic_json(path: Path, value: dict) -> None:
 
 
 @contextlib.contextmanager
-def storage_lock(name: str):
+def storage_lock(name: str, *, timeout: float = 10):
     home = _private_dir(config_home())
     path = home / (name + ".lock")
     if path.is_symlink():
@@ -140,7 +142,17 @@ def storage_lock(name: str):
             if os.fstat(fd).st_size == 0:
                 os.write(fd, b"0")
             os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise CredentialError("等待另一个 NoxGate 进程释放存储锁超时") from None
+                    time.sleep(0.2)
         else:
             os.fchmod(fd, 0o600)
             import fcntl

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "noxgate-game-assets",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "使用 NoxGate 批量生产和验收游戏图片与音频资产。",
   "author": {
     "name": "NoxGate"
@@ -21,7 +21,7 @@
         "longDescription": "按项目资产清单批量生成游戏图片、拆分组合图、组装 sprite sheet，并生产 BGM、战斗音乐、音效和环境音。",
         "category": "Creative",
         "defaultPrompt": [
-          "首次使用先通过插件 bin/noxgate auth ensure 完成 NoxGate 登录与 API Key 授权。",
+          "首次使用时按提示授权 NoxGate，两个插件可共用同一凭据。",
           "使用 NoxGate 批量生产一组游戏图片资产。",
           "使用 NoxGate 生成一批游戏音频资产。"
         ]

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "id": "noxgate-media",
+      "files": [
+        "CHANGELOG.md",
+        "VERSION",
+        "plugin.json",
+        "skills/noxgate-audiogen/SKILL.md",
+        "skills/noxgate-audiogen/agents/openai.yaml",
+        "skills/noxgate-audiogen/scripts/noxgate_audio.py",
+        "skills/noxgate-imagegen/SKILL.md",
+        "skills/noxgate-imagegen/agents/openai.yaml",
+        "skills/noxgate-imagegen/scripts/noxgate_image.py",
+        "skills/noxgate-videogen/SKILL.md",
+        "skills/noxgate-videogen/agents/openai.yaml",
+        "skills/noxgate-videogen/scripts/noxgate_video.py"
+      ],
+      "shared": {
+        "lib/noxgate_runtime.py": "shared/noxgate_runtime.py",
+        "lib/noxgate_auth.py": "shared/noxgate_auth.py",
+        "lib/noxgate_models.py": "shared/noxgate_models.py",
+        "lib/noxgate_credentials.py": "shared/noxgate_credentials.py",
+        "bin/noxgate": "shared/bin/noxgate",
+        "bin/install.py": "shared/bin/install.py",
+        "lib/noxgate_recovery.py": "shared/noxgate_recovery.py",
+        "bin/noxgate.sh": "shared/bin/noxgate.sh",
+        "bin/noxgate.cmd": "shared/bin/noxgate.cmd",
+        "bin/noxgate.ps1": "shared/bin/noxgate.ps1",
+        "lib/noxgate_bootstrap.py": "shared/noxgate_bootstrap.py",
+        "lib/runtime.lock": "shared/runtime.lock"
+      }
+    },
+    {
+      "id": "noxgate-game-assets",
+      "files": [
+        "CHANGELOG.md",
+        "VERSION",
+        "plugin.json",
+        "skills/gpt-image-2-5-game-assets/SKILL.md",
+        "skills/gpt-image-2-5-game-assets/agents/openai.yaml",
+        "skills/gpt-image-2-5-game-assets/references/sheets.md",
+        "skills/gpt-image-2-5-game-assets/requirements.txt",
+        "skills/gpt-image-2-5-game-assets/scripts/asset_batch.py",
+        "skills/gpt-image-2-5-game-assets/scripts/frame_batch.py",
+        "skills/gpt-image-2-5-game-assets/scripts/sheet_batch.py",
+        "skills/noxgate-game-audio/SKILL.md",
+        "skills/noxgate-game-audio/agents/openai.yaml",
+        "skills/noxgate-game-audio/scripts/batch_audio.py"
+      ],
+      "shared": {
+        "lib/noxgate_runtime.py": "shared/noxgate_runtime.py",
+        "lib/noxgate_auth.py": "shared/noxgate_auth.py",
+        "lib/noxgate_models.py": "shared/noxgate_models.py",
+        "lib/noxgate_credentials.py": "shared/noxgate_credentials.py",
+        "bin/noxgate": "shared/bin/noxgate",
+        "bin/install.py": "shared/bin/install.py",
+        "lib/noxgate_recovery.py": "shared/noxgate_recovery.py",
+        "bin/noxgate.sh": "shared/bin/noxgate.sh",
+        "bin/noxgate.cmd": "shared/bin/noxgate.cmd",
+        "bin/noxgate.ps1": "shared/bin/noxgate.ps1",
+        "lib/noxgate_bootstrap.py": "shared/noxgate_bootstrap.py",
+        "lib/runtime.lock": "shared/runtime.lock"
+      }
+    }
+  ],
+  "marketplaceVersion": "0.3.0"
+}

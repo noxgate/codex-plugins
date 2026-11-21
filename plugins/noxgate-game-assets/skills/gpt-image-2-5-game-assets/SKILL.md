@@ -3,19 +3,24 @@ name: gpt-image-2-5-game-assets
 description: 使用 GPT-Image-2.5 Sunburst/Flare 经 NoxGate 生成游戏美术，支持同类多素材组合图的拆分、色键去背景、独立资产校验与断点续跑，也支持逐帧源图组装为 sprite sheet 和 JSON 帧表；不生成视频。
 ---
 
-## 独立认证（首次使用必须执行）
+## 启动与认证
 
-从当前 SKILL.md 向上两级得到插件根目录。首次安装独立 CLI 和游戏图像依赖；默认 `file` 后端无需额外认证依赖：
+从本文件向上两级得到插件根目录，并将以下命令中的 `PLUGIN_ROOT` 设为该绝对路径。macOS/Linux 使用 `"$PLUGIN_ROOT/bin/noxgate.sh"`，Windows 使用同目录的 `noxgate.cmd`，后面的命令和参数相同。平台 ZIP 自带运行环境。通过 Git 市场安装时，启动器会在首次使用时下载并校验所需的运行环境，后续共用本机缓存。
+
+生成命令会自动检查认证。首次使用时在本机浏览器登录 NoxGate、选择 API Key 并确认权限。两个插件默认共用同一用户级 profile，权限满足且凭据有效时，换会话也会沿用。用 `auth status` 检查当前授权，`auth ensure` 用于初始化或补充授权，`auth login` 用于主动更换 API Key 或权限。可用 `NOXGATE_PROFILE` 或 `auth --profile` 选择独立 profile。
+
+凭据由运行时读取。请勿从配置目录、钥匙串或请求日志提取秘密，也不要把认证头写入请求文件。默认使用私有文件存储，支持显式选择 `--store system` 或 `--store portable-env --env-file /absolute/path/to/plugin/.env`。便携模式以明文保存插件凭据。
+
+
+## 选择模型和查看成本
+
+用户没有明确指定本次生成要用的模型时，先查询当前 profile 可用的模型。在对话中列出与用途匹配的模型名称、ID 和目录基础单价，展示能够按数量或时长计算的预估。即使只有一个候选，也等用户选定后再提交生成请求。用户点名时先核对权限和所需能力，沿用用户给出的模型 ID。
 
 ```bash
-python3 "/absolute/path/to/plugin/bin/install.py" --game-assets
-python3 "/absolute/path/to/plugin/bin/noxgate" auth ensure --capability image
+"$PLUGIN_ROOT/bin/noxgate.sh" models --kind game-image --operation generate --count 1
 ```
 
-后续可使用 noxgate auth status、list、use work、logout（删除本地凭据）、revoke（撤销远端并删除本地）。通过 NOXGATE_PROFILE 或 auth --profile 选择 profile。首次授权打开 NoxGate 登录页，用户在网页选择或创建 API Key，运行时自动安全保存凭据。
-
-首次授权必须在本机打开浏览器并登录 NoxGate，选择自己的 API Key 后批准；CLI 自动接收授权结果并保存独立插件凭据。无本机浏览器时，请稍后在可打开浏览器的本机运行 `noxgate auth login`；没有设备码、手工代码或服务端轮询流程。禁止 Agent 读取配置目录、钥匙串、原始密钥或授权秘密，禁止把认证头写入请求文件。默认凭据保存在用户配置目录私有 `file` 后端；只有显式选择 `--store system` 才使用系统安全存储，并需先安装 `--system-keyring` 依赖。`portable-env` 仅接受用户指定的绝对 `.env` 路径，以明文保存插件凭据并在 status 中警告。WorkBuddy 等 Agent 尚未完成真实宿主验证，不宣称已适配。
-
+将数量换成计划提交的源图总数。对组合图按源图计费。把选定的 ID 写入清单的 `defaults.model` 或对应资产的 `model`。 目录基础价以实际结算为准。费率或币种缺失时明确标注，能力待核实的模型需先确认支持该操作。根据查询结果展示选项，示例里的模型 ID 用来演示参数写法。恢复已有任务时使用任务原来的模型。
 
 
 # GPT Image 2.5 游戏素材
@@ -42,9 +47,9 @@ python3 "/absolute/path/to/plugin/bin/noxgate" auth ensure --capability image
 当资产清单要求帧动画时，先为每个方向/势力色生成独立帧目录，再运行 `scripts/frame_batch.py`。该脚本不调用模型，负责确定性校验和组装：统一帧尺寸与 RGBA、检查帧数和透明通道、按固定间距排入 power-of-two sprite sheet，并生成包含 `frame`, `x`, `y`, `w`, `h`, `duration_ms`, `anchor` 的 JSON 帧表。锚点、帧数、fps 和循环语义从当前项目的 manifest 读取。
 
 ```bash
-python3 scripts/frame_batch.py plan --manifest /absolute/path/frames.json
-python3 scripts/frame_batch.py assemble --manifest /absolute/path/frames.json --output-dir /absolute/path/atlases
-python3 scripts/frame_batch.py validate --manifest /absolute/path/frames.json
+"$PLUGIN_ROOT/bin/noxgate.sh" frame-batch plan --manifest /absolute/path/frames.json
+"$PLUGIN_ROOT/bin/noxgate.sh" frame-batch assemble --manifest /absolute/path/frames.json --output-dir /absolute/path/atlases
+"$PLUGIN_ROOT/bin/noxgate.sh" frame-batch validate --manifest /absolute/path/frames.json
 ```
 
 `assemble` 可重复执行，输出以临时文件替换，适合无人值守断点任务。源帧若尺寸、透明度或数量不合格会失败，不自动裁切或改变锚点；模型生成仍通过 `asset_batch.py`，且只允许 `gpt-image-2.5-flare` 或 `gpt-image-2.5-sunburst`。
@@ -62,17 +67,15 @@ python3 scripts/frame_batch.py validate --manifest /absolute/path/frames.json
 ## 命令
 
 ```bash
-python3 scripts/asset_batch.py plan --manifest /absolute/path/assets.json
-python3 scripts/asset_batch.py run --manifest /absolute/path/assets.json --output-dir /absolute/path/generated --max-new-tasks 4
+"$PLUGIN_ROOT/bin/noxgate.sh" asset-batch plan --manifest /absolute/path/assets.json
+"$PLUGIN_ROOT/bin/noxgate.sh" asset-batch run --manifest /absolute/path/assets.json --output-dir /absolute/path/generated --max-new-tasks 4
 ```
 
-manifest 格式按下方命令和脚本的 `--help` 创建；项目专属的资产范围、风格及验收标准应来自当前项目自身的资料。脚本要求 Python 3.11+ 和 Pillow；组合图拆分另需 NumPy。使用 --profile 选择独立 profile；不再支持 --config 或静默 Codex 回退。脚本只处理静态 PNG/JPEG/WebP。输出目录含素材、状态文件和需要人工检查的原图；不要把生成目录误当成已验收资产目录。
+manifest 格式按下方命令和脚本的 `--help` 创建；项目专属的资产范围、风格及验收标准应来自当前项目自身的资料。启动器负责加载包内 Python、Pillow 和 NumPy。使用 --profile 选择独立 profile；不再支持 --config 或静默 Codex 回退。脚本只处理静态 PNG/JPEG/WebP。输出目录含素材、状态文件和需要人工检查的原图；不要把生成目录误当成已验收资产目录。
 
 ## 插件路径与依赖
 
-以当前已加载的 `SKILL.md` 所在目录为 Skill 根目录，解析本包 `scripts/`，不假设安装在 `~/.codex/skills`。示例命令均在该目录中执行或改为脚本绝对路径。不要修改插件缓存；状态、清单和产物写入用户项目或临时目录。
-
-Python 3.11+；运行前检查 Pillow，组合图拆分还需 NumPy。缺失时向用户说明安装命令，由用户决定是否安装；不自动安装。推荐为该工具建独立 venv，执行 `python3 -m venv /absolute/path/venv`，再用其 Python 执行 `-m pip install -r /absolute/path/to/skill/requirements.txt`。
+通过插件启动器执行示例，状态、清单和产物写入用户项目或临时目录。
 
 manifest 示例（资源范围、提示词和尺寸应来自当前项目）：
 

@@ -46,7 +46,7 @@ def load_provider(path: Path | None = None, capability: str = "image") -> tuple[
         from noxgate_auth import AuthError, CredentialError
         if isinstance(exc, (AuthError, CredentialError)):
             raise MediaError(str(exc)) from None
-        raise MediaError("NoxGate 认证未完成；请运行插件 bin/noxgate auth login，并在浏览器授权") from None
+        raise MediaError("NoxGate 认证未完成；请用插件启动器检查 auth status 或执行 auth ensure") from None
 
 
 def validate_url(url: str) -> None:
@@ -108,7 +108,7 @@ def json_object(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def request_json(url: str, token: str, *, method: str = "GET", payload: dict | None = None) -> dict:
+def request_json(url: str, token: str = "", *, method: str = "GET", payload: dict | None = None) -> dict:
     body = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
     return json_object(request(url, token, method=method, body=body)[0])
 
@@ -435,14 +435,16 @@ def migrate_state(state_path: Path, name: str, *, source_gateway: str | None = N
             raise
 
 
-def validate_payload(value: dict, kind: str) -> dict:
+def validate_payload(value: dict, kind: str, *, allow_missing_model: bool = False) -> dict:
     if not isinstance(value, dict):
         raise MediaError("请求必须是 JSON 对象")
     if kind not in ENDPOINTS:
         raise MediaError("不支持的媒体类型")
     if any(not isinstance(key, str) for key in value):
         raise MediaError("请求字段名称无效")
-    if not isinstance(value.get("model"), str) or not value["model"].strip():
+    if not (allow_missing_model and missing_model(value)) and (
+        not isinstance(value.get("model"), str) or not value["model"].strip()
+    ):
         raise MediaError("请求必须指定可调用的 model")
     if kind == "audio" and bool(value.get("input")) == bool(value.get("prompt")):
         raise MediaError("音频请求必须在 input 和 prompt 中选择一个")
@@ -462,8 +464,13 @@ def validate_payload(value: dict, kind: str) -> dict:
     return value
 
 
-def read_payload(path: Path, kind: str) -> dict:
-    return validate_payload(json_object(path.read_bytes()), kind)
+def read_payload(path: Path, kind: str, *, allow_missing_model: bool = False) -> dict:
+    return validate_payload(json_object(path.read_bytes()), kind, allow_missing_model=allow_missing_model)
+
+
+def missing_model(value: dict) -> bool:
+    model = value.get("model")
+    return model is None or isinstance(model, str) and not model.strip()
 
 
 def cli(kind: str) -> int:
@@ -490,19 +497,23 @@ def cli(kind: str) -> int:
             if args.timeout <= 0 or args.poll_interval <= 0:
                 raise MediaError("等待时间和轮询间隔必须大于零")
             if args.command == "generate":
-                payload = read_payload(args.request, kind)
+                payload = read_payload(args.request, kind, allow_missing_model=True)
+                if missing_model(payload):
+                    from noxgate_models import show_media_request_models
+                    show_media_request_models(kind, payload)
+                    print("请选择模型，将 ID 写入请求的 model 字段后再执行生成命令", file=sys.stderr)
+                    return 2
                 paths = generate(kind, payload, args.output.expanduser(), args.state or Path(str(args.output) + ".task.json"),
                                  timeout=args.timeout, interval=args.poll_interval)
             else:
                 paths = resume(args.state, output=args.output, timeout=args.timeout, interval=args.poll_interval)
             print("\n".join(paths))
+        elif args.command == "models":
+            from noxgate_models import show_models
+            show_models(kind, "generate")
         else:
             base, token = load_provider(capability=kind)
-            if args.command == "models":
-                value = request_json(base + "/models", token)
-                for model in value.get("data", []):
-                    print(model.get("id", ""))
-            elif args.command == "cancel":
+            if args.command == "cancel":
                 request(task_url(base, kind, args.task_id, args.model), token, method="DELETE")
                 print("已请求取消视频任务；结果取决于上游当前状态")
             else:

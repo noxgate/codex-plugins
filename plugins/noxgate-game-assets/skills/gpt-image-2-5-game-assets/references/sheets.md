@@ -19,11 +19,11 @@
 ## 命令
 
 ```bash
-python3 scripts/sheet_batch.py plan --manifest /absolute/path/split-manifest.json
-python3 scripts/sheet_batch.py split --manifest /absolute/path/split-manifest.json --output-dir /absolute/path/extracted
-python3 scripts/sheet_batch.py validate --manifest /absolute/path/split-manifest.json --output-dir /absolute/path/extracted
+"$PLUGIN_ROOT/bin/noxgate.sh" sheet-batch plan --manifest /absolute/path/split-manifest.json
+"$PLUGIN_ROOT/bin/noxgate.sh" sheet-batch split --manifest /absolute/path/split-manifest.json --output-dir /absolute/path/extracted
+"$PLUGIN_ROOT/bin/noxgate.sh" sheet-batch validate --manifest /absolute/path/split-manifest.json --output-dir /absolute/path/extracted
 ```
 
-脚本需要Pillow与NumPy。边缘实际色键由每格边框测量；去色键后处理抗锯齿混色并记录无法估计的边缘。低透明度的孤立噪声可清理；大面积半透明物体须原生透明图或专用抠图，脚本会拒绝超出窄轮廓的混色区域，不冒充通用AI分割器。
+启动器会加载包内的 Pillow 和 NumPy。边缘实际色键由每格边框测量；去色键后处理抗锯齿混色并记录无法估计的边缘。低透明度的孤立噪声可清理；大面积半透明物体须原生透明图或专用抠图，脚本会拒绝超出窄轮廓的混色区域，不冒充通用AI分割器。
 
 产物为独立RGBA PNG、`review.png` 和 `split-report.json`。报告记录源图SHA256和成员ID，状态固定待美术审核；工具不能判断一株树是否正确画成松树。通过机器校验后逐件查看浅/深/棋盘背景并在目标展示尺寸下审核，再验收整组统一性。缺件或一件形态错误可参考原sheet做定点修正版，不自动无限重生成。分组样板未批准时只生成当前样板范围。

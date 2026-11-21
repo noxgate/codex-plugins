@@ -46,9 +46,18 @@ def multipart(fields: dict[str, str], images: list[Path], mask: Path | None) -> 
 
 
 def submit(args):
+    if args.command == "models":
+        from noxgate_models import show_models
+        show_models("image", "generate")
+        return 0
     if args.command == "resume":
         paths = resume(args.state, output=args.output)
     else:
+        if not args.model or not args.model.strip():
+            from noxgate_models import show_models
+            show_models("image", args.command, count=getattr(args, "count", 1))
+            print("请选择模型后使用 --model 再执行生成或编辑命令", file=sys.stderr)
+            return 2
         fields = {"model": args.model, "prompt": args.prompt, "size": args.size,
                   "quality": args.quality, "output_format": args.output_format, "response_format": "b64_json"}
         if not args.prompt.strip():
@@ -72,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
         command = subparsers.add_parser(name)
         command.add_argument("--prompt", required=True)
         command.add_argument("--output", type=Path, required=True)
-        command.add_argument("--model", default="gpt-image-2.5-flare")
+        command.add_argument("--model", help="chosen model ID; when omitted, print options and rates")
         command.add_argument("--size", default="1024x1024")
         command.add_argument("--quality", choices=("low", "medium", "high", "auto"), default="medium")
         command.add_argument("--output-format", choices=("png", "jpeg", "webp"), default="png")
@@ -85,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     restore = subparsers.add_parser("resume")
     restore.add_argument("--state", type=Path, required=True)
     restore.add_argument("--output", type=Path)
+    subparsers.add_parser("models")
     return parser
 
 

@@ -13,7 +13,8 @@ from noxgate_credentials import config_home
 
 venv = config_home() / "venv"
 python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-if python.is_file() and Path(sys.prefix).resolve() != venv.resolve():
+if (python.is_file() and Path(sys.prefix).resolve() != venv.resolve()
+        and os.environ.get("NOXGATE_NO_REEXEC") != "1"):
     os.execv(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
 from noxgate_auth import cli
 

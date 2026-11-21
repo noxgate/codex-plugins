@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Any
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "lib" if (PLUGIN_ROOT / "lib/noxgate_runtime.py").is_file() else PLUGIN_ROOT.parent / "shared"))
-from noxgate_runtime import MediaError, load_provider, request_json as media_request_json, download_bytes, cache_result, save_state as safe_save_state
+from noxgate_runtime import MediaError, load_provider, request_json as media_request_json, download_bytes, cache_result, missing_model, save_state as safe_save_state
 from noxgate_auth import profile_name
+from noxgate_models import GAME_IMAGE_MODELS, show_models
 
 try:
     from PIL import Image, ImageOps, UnidentifiedImageError
@@ -30,7 +31,7 @@ except ImportError as exc:
     raise SystemExit("Pillow is required: install it in the selected Python environment") from exc
 
 
-MODELS = {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}
+MODELS = GAME_IMAGE_MODELS
 FORMATS = {"png": "PNG", "jpeg": "JPEG", "webp": "WEBP"}
 ASSET_ID = re.compile(r"^[a-z][a-z0-9_-]{1,79}$")
 DIMENSIONS = re.compile(r"^([1-9][0-9]*)x([1-9][0-9]*)$")
@@ -68,7 +69,7 @@ def load_config(path: Path | None = None) -> tuple[str, str, set[str]]:
     return base, key, MODELS
 
 
-def load_manifest(path: Path, configured_models: set[str]) -> list[dict[str, Any]]:
+def load_manifest(path: Path, configured_models: set[str], *, allow_missing_model: bool = False) -> list[dict[str, Any]]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -93,7 +94,10 @@ def load_manifest(path: Path, configured_models: set[str]) -> list[dict[str, Any
         seen.add(asset_id)
         if not isinstance(item.get("prompt"), str) or not item["prompt"].strip():
             raise AssetError(f"{asset_id}: prompt is required")
-        if item.get("model") not in MODELS or item["model"] not in configured_models:
+        model = item.get("model")
+        if not (allow_missing_model and missing_model(item)) and (
+            not isinstance(model, str) or model not in MODELS or model not in configured_models
+        ):
             raise AssetError(f"{asset_id}: model is not an enabled GPT Image 2.5 model")
         item.setdefault("size", "1024x1024")
         item.setdefault("quality", "high")
@@ -312,20 +316,25 @@ def main() -> int:
     if args.poll_interval <= 0 or args.poll_timeout <= 0:
         parser.error("poll timings must be positive")
     try:
-        base_url, key, configured_models = ("", "", MODELS) if args.command == "plan" else load_config()
-        assets = load_manifest(args.manifest, configured_models)
+        assets = load_manifest(args.manifest, MODELS, allow_missing_model=True)
         if args.only:
             selected = set(args.only)
             unknown = selected - {item["id"] for item in assets}
             if unknown:
                 raise AssetError(f"unknown selected asset IDs: {', '.join(sorted(unknown))}")
             assets = [item for item in assets if item["id"] in selected]
+        missing = [item for item in assets if missing_model(item)]
+        if missing:
+            show_models("game-image", "generate", count=sum(item["n"] for item in missing))
+            print("请选择下列资产的模型并写入清单：" + ", ".join(item["id"] for item in missing), file=sys.stderr)
+            return 2
         if args.command == "plan":
             counts = Counter(item["model"] for item in assets)
             print(f"assets={len(assets)} images={sum(item['n'] for item in assets)}")
             for model, count in sorted(counts.items()):
                 print(f"{model}: {count} tasks")
             return 0
+        base_url, key, _ = load_config()
         output_dir = args.output_dir.expanduser().resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         submissions = 0
