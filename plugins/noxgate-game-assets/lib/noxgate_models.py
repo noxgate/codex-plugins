@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation
 from noxgate_runtime import MediaError, load_provider, request_json
 
 
-GAME_IMAGE_MODELS = {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}
+CONFIRMED_IMAGE_EDIT_MODELS = {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}
 OPERATIONS = {
     "image": ("generate", "edit"),
     "game-image": ("generate", "edit"),
@@ -38,9 +38,9 @@ def operation_support(model_id: str, capability: str, kind: str, operation: str)
             ("-edit", "-remix", "-remove-bg", "-retexture", "-upload-paint", "-variation")
         )
         if operation == "edit":
-            return "confirmed" if model_id in GAME_IMAGE_MODELS else "unverified"
+            return "confirmed" if model_id in CONFIRMED_IMAGE_EDIT_MODELS else "unverified"
         if edit_variant or normalized_id.endswith("-layerize"):
-            return None
+            return "unverified" if kind == "game-image" else None
         return "confirmed"
     if kind == "audio":
         if capability in {"tts", "speech_synthesis"}:
@@ -105,6 +105,31 @@ def price_lines(config: object) -> list[dict]:
     return lines
 
 
+def authorized_models(base: str, token: str, kind: str, operation: str) -> tuple[list[dict], bool]:
+    response = request_json(base + "/models", token)
+    if not isinstance(response.get("data"), list):
+        raise MediaError("网关未返回有效的模型权限列表")
+    authorized = {item["id"]: item for item in response["data"]
+                  if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]}
+    catalog_base = base.removesuffix("/v1") + "/api/public"
+    try:
+        public = request_json(catalog_base + "/models").get("data")
+    except MediaError:
+        public = None
+    catalog = {item["model_id"]: item for item in public
+               if isinstance(item, dict) and isinstance(item.get("model_id"), str)} if isinstance(public, list) else {}
+    models = []
+    for model_id, entry in sorted(authorized.items()):
+        metadata = catalog.get(model_id, {})
+        capability = entry.get("capability_type") or metadata.get("capability_type")
+        support = operation_support(model_id, capability, kind, operation) if capability else "unverified"
+        if support is not None:
+            models.append({"id": model_id, "name": metadata.get("name") or model_id,
+                           "capability": capability, "operation_support": support,
+                           "price_config": metadata.get("price_config")})
+    return models, isinstance(public, list)
+
+
 def listing(kind: str, operation: str, *, count: int | None = None, duration: Decimal | None = None) -> dict:
     if operation not in OPERATIONS[kind]:
         raise MediaError(f"{kind} 不支持模型用途 {operation}")
@@ -113,40 +138,19 @@ def listing(kind: str, operation: str, *, count: int | None = None, duration: De
     if duration is not None and (not duration.is_finite() or duration <= 0):
         raise MediaError("时长必须大于零")
     base, token = load_provider(capability="image" if kind == "game-image" else kind)
-    response = request_json(base + "/models", token)
-    if not isinstance(response.get("data"), list):
-        raise MediaError("网关未返回有效的模型权限列表")
-    ids = {item["id"] for item in response["data"]
-           if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]}
-    if kind == "game-image":
-        ids &= GAME_IMAGE_MODELS
+    models, catalog_available = authorized_models(base, token, kind, operation)
     catalog_base = base.removesuffix("/v1") + "/api/public"
-    try:
-        public = request_json(catalog_base + "/models").get("data")
-    except MediaError:
-        public = None
-    catalog = {item["model_id"]: item for item in public
-               if isinstance(item, dict) and isinstance(item.get("model_id"), str)} if isinstance(public, list) else {}
     try:
         currency = request_json(catalog_base + "/platform-config").get("data", {}).get("payment_currency")
     except (AttributeError, MediaError):
         currency = None
     currency = currency.upper() if isinstance(currency, str) and re.fullmatch(r"[A-Za-z]{3}", currency) else None
 
-    models = []
-    for model_id in sorted(ids):
-        metadata = catalog.get(model_id, {})
-        capability = metadata.get("capability_type")
-        if not capability and kind == "game-image":
-            capability = "image_generation"
-        support = operation_support(model_id, capability, kind, operation) if capability else "unverified"
-        if support is None:
-            continue
-        prices = price_lines(metadata.get("price_config"))
-        model = {"id": model_id, "name": metadata.get("name") or model_id,
-                 "capability": capability, "operation_support": support,
-                 "pricing_status": "available" if prices and currency else "unavailable", "rates": prices}
-        if currency and support == "confirmed" and len(prices) == 1:
+    for model in models:
+        prices = price_lines(model.pop("price_config"))
+        model["pricing_status"] = "available" if prices and currency else "unavailable"
+        model["rates"] = prices
+        if currency and model["operation_support"] == "confirmed" and len(prices) == 1:
             price = prices[0]
             if "conditions" not in price and "included_quantity" not in price:
                 quantity = None
@@ -158,9 +162,8 @@ def listing(kind: str, operation: str, *, count: int | None = None, duration: De
                         quantity /= 60
                 if quantity is not None:
                     model["estimated_base_cost"] = format((Decimal(price["amount"]) * quantity).normalize(), "f")
-        models.append(model)
     return {"kind": kind, "operation": operation, "currency": currency, "price_source": "public_base_rate",
-            "catalog_available": isinstance(public, list), "count": count,
+            "catalog_available": catalog_available, "count": count,
             "duration_seconds_per_request": str(duration) if duration is not None else None, "models": models}
 
 

@@ -58,9 +58,26 @@ class ModelSelectionTests(unittest.TestCase):
             result = models.listing("game-image", "generate", count=2)
         self.assertFalse(result["catalog_available"])
         self.assertIsNone(result["currency"])
-        self.assertEqual([model["id"] for model in result["models"]], ["gpt-image-2.5-flare"])
-        self.assertEqual(result["models"][0]["rates"], [])
-        self.assertNotIn("estimated_base_cost", result["models"][0])
+        self.assertEqual([model["id"] for model in result["models"]], ["another-image", "gpt-image-2.5-flare"])
+        for model in result["models"]:
+            self.assertEqual(model["operation_support"], "unverified")
+            self.assertEqual(model["rates"], [])
+            self.assertNotIn("estimated_base_cost", model)
+
+    def test_game_image_catalog_uses_key_permissions_instead_of_model_family(self):
+        allowed = {"data": [{"id": name} for name in ("gpt-image-2.5-flare", "seedream", "suno-v6-beta")]}
+        public = {"data": [
+            {"model_id": "gpt-image-2.5-flare", "capability_type": "image_generation"},
+            {"model_id": "seedream", "capability_type": "image_generation",
+             "price_config": {"rules": [{"meter": "image_count", "price": 50000}]}},
+            {"model_id": "suno-v6-beta", "capability_type": "audio_generation"},
+            {"model_id": "z-image-turbo", "capability_type": "image_generation"},
+        ]}
+        with patch.object(models, "load_provider", return_value=("https://fixture.invalid/v1", "ngp_fixture")), \
+                patch.object(models, "request_json", side_effect=[allowed, public, {"data": {"payment_currency": "usd"}}]):
+            result = models.listing("game-image", "generate", count=2)
+        self.assertEqual([model["id"] for model in result["models"]], ["gpt-image-2.5-flare", "seedream"])
+        self.assertEqual(result["models"][1]["estimated_base_cost"], "0.1")
 
     def test_generation_without_a_model_only_lists_choices(self):
         plugins = Path(__file__).resolve().parents[1]
@@ -68,7 +85,7 @@ class ModelSelectionTests(unittest.TestCase):
             "image": plugins / "noxgate-media/skills/noxgate-imagegen/scripts/noxgate_image.py",
             "audio": plugins / "noxgate-media/skills/noxgate-audiogen/scripts/noxgate_audio.py",
             "video": plugins / "noxgate-media/skills/noxgate-videogen/scripts/noxgate_video.py",
-            "asset": plugins / "noxgate-game-assets/skills/gpt-image-2-5-game-assets/scripts/asset_batch.py",
+            "asset": plugins / "noxgate-game-assets/skills/noxgate-image-assets/scripts/asset_batch.py",
             "batch": plugins / "noxgate-game-assets/skills/noxgate-game-audio/scripts/batch_audio.py",
         }
         with tempfile.TemporaryDirectory() as directory:

@@ -15,9 +15,9 @@ TOOLS = {
     "image": "noxgate-imagegen/scripts/noxgate_image.py",
     "video": "noxgate-videogen/scripts/noxgate_video.py",
     "audio": "noxgate-audiogen/scripts/noxgate_audio.py",
-    "asset-batch": "gpt-image-2-5-game-assets/scripts/asset_batch.py",
-    "frame-batch": "gpt-image-2-5-game-assets/scripts/frame_batch.py",
-    "sheet-batch": "gpt-image-2-5-game-assets/scripts/sheet_batch.py",
+    "asset-batch": "noxgate-image-assets/scripts/asset_batch.py",
+    "frame-batch": "noxgate-image-assets/scripts/frame_batch.py",
+    "sheet-batch": "noxgate-image-assets/scripts/sheet_batch.py",
     "audio-batch": "noxgate-game-audio/scripts/batch_audio.py",
 }
 

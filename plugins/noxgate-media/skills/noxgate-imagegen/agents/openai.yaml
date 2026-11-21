@@ -2,3 +2,6 @@ interface:
   display_name: "NoxGate 图片生成"
   short_description: "通过独立 NoxGate 登录与 API Key 授权生成或编辑图片"
   default_prompt: "使用 $noxgate-imagegen 通过 NoxGate 生成图片。"
+
+policy:
+  allow_implicit_invocation: false

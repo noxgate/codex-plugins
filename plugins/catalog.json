@@ -38,13 +38,13 @@
         "CHANGELOG.md",
         "VERSION",
         "plugin.json",
-        "skills/gpt-image-2-5-game-assets/SKILL.md",
-        "skills/gpt-image-2-5-game-assets/agents/openai.yaml",
-        "skills/gpt-image-2-5-game-assets/references/sheets.md",
-        "skills/gpt-image-2-5-game-assets/requirements.txt",
-        "skills/gpt-image-2-5-game-assets/scripts/asset_batch.py",
-        "skills/gpt-image-2-5-game-assets/scripts/frame_batch.py",
-        "skills/gpt-image-2-5-game-assets/scripts/sheet_batch.py",
+        "skills/noxgate-image-assets/SKILL.md",
+        "skills/noxgate-image-assets/agents/openai.yaml",
+        "skills/noxgate-image-assets/references/sheets.md",
+        "skills/noxgate-image-assets/requirements.txt",
+        "skills/noxgate-image-assets/scripts/asset_batch.py",
+        "skills/noxgate-image-assets/scripts/frame_batch.py",
+        "skills/noxgate-image-assets/scripts/sheet_batch.py",
         "skills/noxgate-game-audio/SKILL.md",
         "skills/noxgate-game-audio/agents/openai.yaml",
         "skills/noxgate-game-audio/scripts/batch_audio.py"
@@ -65,5 +65,5 @@
       }
     }
   ],
-  "marketplaceVersion": "0.3.0"
+  "marketplaceVersion": "0.3.1"
 }

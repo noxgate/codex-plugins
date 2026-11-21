@@ -158,7 +158,7 @@ export async function packagePlugins({
     }
     if (platform) {
       entries.push({ name: 'runtime/platform.txt', data: Buffer.from(platform + '\n') });
-      entries.push(...runtime.filter(({ group }) => group !== 'game' || skills.includes('gpt-image-2-5-game-assets')));
+      entries.push(...runtime.filter(({ group }) => group !== 'game' || skills.includes('noxgate-image-assets')));
     }
     const data = zip(entries.slice().sort((a, b) => a.name.localeCompare(b.name)));
     const filename = `${spec.id}-${version}${platform ? '-' + platform : ''}.zip`;

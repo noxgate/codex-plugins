@@ -23,7 +23,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "lib" if (PLUGIN_ROOT / "lib/noxgate_runtime.py").is_file() else PLUGIN_ROOT.parent / "shared"))
 from noxgate_runtime import MediaError, load_provider, request_json as media_request_json, download_bytes, cache_result, missing_model, save_state as safe_save_state
 from noxgate_auth import profile_name
-from noxgate_models import GAME_IMAGE_MODELS, show_models
+from noxgate_models import authorized_models, show_models
 
 try:
     from PIL import Image, ImageOps, UnidentifiedImageError
@@ -31,7 +31,7 @@ except ImportError as exc:
     raise SystemExit("Pillow is required: install it in the selected Python environment") from exc
 
 
-MODELS = GAME_IMAGE_MODELS
+LEGACY_IMAGE_MODELS = {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}
 FORMATS = {"png": "PNG", "jpeg": "JPEG", "webp": "WEBP"}
 ASSET_ID = re.compile(r"^[a-z][a-z0-9_-]{1,79}$")
 DIMENSIONS = re.compile(r"^([1-9][0-9]*)x([1-9][0-9]*)$")
@@ -62,14 +62,7 @@ def dimensions(value: str) -> tuple[int, int]:
     return result
 
 
-def load_config(path: Path | None = None) -> tuple[str, str, set[str]]:
-    if path is not None:
-        raise AssetError("不再支持 Codex provider 配置；请使用 NoxGate profile")
-    base, key = load_provider(capability="image")
-    return base, key, MODELS
-
-
-def load_manifest(path: Path, configured_models: set[str], *, allow_missing_model: bool = False) -> list[dict[str, Any]]:
+def load_manifest(path: Path) -> list[dict[str, Any]]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -95,29 +88,28 @@ def load_manifest(path: Path, configured_models: set[str], *, allow_missing_mode
         if not isinstance(item.get("prompt"), str) or not item["prompt"].strip():
             raise AssetError(f"{asset_id}: prompt is required")
         model = item.get("model")
-        if not (allow_missing_model and missing_model(item)) and (
-            not isinstance(model, str) or model not in MODELS or model not in configured_models
-        ):
-            raise AssetError(f"{asset_id}: model is not an enabled GPT Image 2.5 model")
-        item.setdefault("size", "1024x1024")
-        item.setdefault("quality", "high")
-        item.setdefault("background", "transparent")
-        item.setdefault("output_format", "png")
+        if not missing_model(item) and (not isinstance(model, str) or model != model.strip()):
+            raise AssetError(f"{asset_id}: model must be an exact NoxGate model ID")
+        # Keep the original request and fingerprint for existing GPT Image 2.5 manifests.
+        if model in LEGACY_IMAGE_MODELS:
+            item.setdefault("size", "1024x1024")
+            item.setdefault("quality", "high")
+            item.setdefault("background", "transparent")
+            item.setdefault("output_format", "png")
         item.setdefault("n", 1)
-        if item["size"] != "auto":
-            dimensions(item["size"])
-        if item["quality"] not in {"low", "medium", "high", "xhigh", "max", "auto"}:
-            raise AssetError(f"{asset_id}: unsupported quality")
-        if item["background"] not in {"opaque", "transparent"}:
+        for field in ("size", "quality", "resolution"):
+            if field in item and (not isinstance(item[field], str) or not item[field].strip()):
+                raise AssetError(f"{asset_id}: {field} must be a nonempty string")
+        background = item.get("background", "transparent")
+        if background not in ("opaque", "transparent"):
             raise AssetError(f"{asset_id}: background must be opaque or transparent")
-        if item["output_format"] not in FORMATS or (item["background"] == "transparent" and item["output_format"] == "jpeg"):
+        output_format = item.get("output_format", "png")
+        if not isinstance(output_format, str) or output_format not in FORMATS or (background == "transparent" and output_format == "jpeg"):
             raise AssetError(f"{asset_id}: invalid output format/background combination")
         if type(item["n"]) is not int or not 1 <= item["n"] <= 10:
             raise AssetError(f"{asset_id}: n must be an integer from 1 to 10")
         if "target_size" in item:
             dimensions(item["target_size"])
-        if "resolution" in item and item["resolution"] not in {"1K", "2K", "4K"}:
-            raise AssetError(f"{asset_id}: invalid resolution")
         urls = item.get("image_urls", [])
         if not isinstance(urls, list) or len(urls) > 16 or any(not isinstance(url, str) or not url.startswith("https://") for url in urls):
             raise AssetError(f"{asset_id}: image_urls must be up to 16 HTTPS URLs")
@@ -180,7 +172,8 @@ def render_image(raw: bytes, item: dict[str, Any]) -> tuple[bytes, tuple[int, in
         raise AssetError("downloaded data is not a valid image") from exc
     if image.width * image.height > 64_000_000:
         raise AssetError("image exceeds 64 million pixels")
-    if item["background"] == "transparent":
+    wants_transparency = item.get("background", "transparent") == "transparent"
+    if wants_transparency:
         image = image.convert("RGBA")
         has_transparency = image.getchannel("A").getextrema()[0] < 255
     else:
@@ -188,7 +181,7 @@ def render_image(raw: bytes, item: dict[str, Any]) -> tuple[bytes, tuple[int, in
         has_transparency = False
     if "target_size" in item:
         width, height = dimensions(item["target_size"])
-        if item["background"] == "transparent":
+        if wants_transparency:
             image.thumbnail((width, height), Image.Resampling.LANCZOS)
             canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             canvas.alpha_composite(image, ((width - image.width) // 2, (height - image.height) // 2))
@@ -196,7 +189,7 @@ def render_image(raw: bytes, item: dict[str, Any]) -> tuple[bytes, tuple[int, in
         else:
             image = ImageOps.fit(image, (width, height), method=Image.Resampling.LANCZOS)
     output = io.BytesIO()
-    image.save(output, format=FORMATS[item["output_format"]])
+    image.save(output, format=FORMATS[item.get("output_format", "png")])
     return output.getvalue(), image.size, has_transparency
 
 
@@ -224,9 +217,9 @@ def finish_asset(item: dict[str, Any], result: dict[str, Any], output_dir: Path,
     for number, part in enumerate(parts, 1):
         raw = read_image_bytes(part, base_url, key)
         content, size, alpha = render_image(raw, item)
-        if item["background"] == "transparent" and not alpha:
+        if item.get("background", "transparent") == "transparent" and not alpha:
             review = True
-        filename = f"{item['id']}__{number:02}.{item['output_format']}"
+        filename = f"{item['id']}__{number:02}.{item.get('output_format', 'png')}"
         relative = f"_review/{filename}"
         write_image(output_dir / relative, content)
         files.append(relative)
@@ -316,7 +309,7 @@ def main() -> int:
     if args.poll_interval <= 0 or args.poll_timeout <= 0:
         parser.error("poll timings must be positive")
     try:
-        assets = load_manifest(args.manifest, MODELS, allow_missing_model=True)
+        assets = load_manifest(args.manifest)
         if args.only:
             selected = set(args.only)
             unknown = selected - {item["id"] for item in assets}
@@ -334,19 +327,26 @@ def main() -> int:
             for model, count in sorted(counts.items()):
                 print(f"{model}: {count} tasks")
             return 0
-        base_url, key, _ = load_config()
+        base_url, key = load_provider(capability="image")
         output_dir = args.output_dir.expanduser().resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         submissions = 0
         failures = 0
         incomplete = 0
+        model_ids = None
         for item in assets:
             state_path = output_dir / "_state" / f"{item['id']}.json"
             existed_before = state_path.exists()
+            may_submit = submissions < args.max_new_tasks
+            if may_submit and not existed_before and model_ids is None:
+                models, _ = authorized_models(base_url, key, "game-image", "generate")
+                model_ids = {model["id"] for model in models}
             try:
+                if may_submit and not existed_before and item["model"] not in model_ids:
+                    raise AssetError(f"当前 API Key 的图片模型列表中没有 {item['model']}")
                 status = run_one(
                     item, output_dir, base_url, key, args.poll_interval, args.poll_timeout,
-                    submissions < args.max_new_tasks,
+                    may_submit,
                 )
                 incomplete += status == "not_submitted"
                 failures += status == "needs_review"

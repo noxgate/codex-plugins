@@ -182,10 +182,37 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotIn("recovery_id",state)
 
     def asset_module(self):
-        path=Path(__file__).resolve().parents[1]/"noxgate-game-assets/skills/gpt-image-2-5-game-assets/scripts/asset_batch.py"
+        path=Path(__file__).resolve().parents[1]/"noxgate-game-assets/skills/noxgate-image-assets/scripts/asset_batch.py"
         spec=importlib.util.spec_from_file_location("recovery_asset_batch",path)
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         return module
+
+    def test_game_asset_run_accepts_other_authorized_image_models_and_rejects_unlisted_models(self):
+        asset = self.asset_module()
+        manifest = self.root / "assets.json"
+        output = self.root / "assets"
+        manifest.write_text(json.dumps({"assets": [
+            {"id": "allowed", "model": "doubao-seedream-5.0-pro", "prompt": "fixture"},
+            {"id": "denied", "model": "z-image-turbo", "prompt": "fixture"},
+        ]}))
+        image = io.BytesIO()
+        asset.Image.new("RGBA", (2, 2), (1, 2, 3, 0)).save(image, format="PNG")
+        response = {"data": [{"b64_json": base64.b64encode(image.getvalue()).decode()}]}
+        argv = ["asset-batch", "run", "--manifest", str(manifest), "--output-dir", str(output),
+                "--max-new-tasks", "2"]
+        stderr = io.StringIO()
+        with patch.object(sys, "argv", argv), \
+                patch.object(asset, "load_provider", return_value=(BASE, SECRET)), \
+                patch.object(asset, "authorized_models", return_value=([{"id": "doubao-seedream-5.0-pro"}], True)) as available, \
+                patch.object(asset, "request_json", return_value=response) as request, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            self.assertEqual(asset.main(), 1)
+        available.assert_called_once_with(BASE, SECRET, "game-image", "generate")
+        request.assert_called_once_with("POST", BASE + "/images/generations", SECRET,
+                                        {"model": "doubao-seedream-5.0-pro", "prompt": "fixture", "n": 1})
+        self.assertTrue((output / "allowed__01.png").is_file())
+        self.assertIn("z-image-turbo", stderr.getvalue())
+        self.assertFalse((output / "_state" / "denied.json").exists())
 
     def test_game_asset_received_task_requeries_original_without_new_post(self):
         asset=self.asset_module();out=self.root/"assets"

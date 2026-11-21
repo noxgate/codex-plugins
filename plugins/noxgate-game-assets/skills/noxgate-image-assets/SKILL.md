@@ -1,6 +1,6 @@
 ---
-name: gpt-image-2-5-game-assets
-description: 使用 GPT-Image-2.5 Sunburst/Flare 经 NoxGate 生成游戏美术，支持同类多素材组合图的拆分、色键去背景、独立资产校验与断点续跑，也支持逐帧源图组装为 sprite sheet 和 JSON 帧表；不生成视频。
+name: noxgate-image-assets
+description: 使用当前 NoxGate API Key 可调用的图片生成模型生产游戏美术，支持批量生成、组合图拆分、色键去背景、资产校验、断点续跑和序列帧图集组装。
 ---
 
 ## 启动与认证
@@ -23,15 +23,14 @@ description: 使用 GPT-Image-2.5 Sunburst/Flare 经 NoxGate 生成游戏美术�
 将数量换成计划提交的源图总数。对组合图按源图计费。把选定的 ID 写入清单的 `defaults.model` 或对应资产的 `model`。 目录基础价以实际结算为准。费率或币种缺失时明确标注，能力待核实的模型需先确认支持该操作。根据查询结果展示选项，示例里的模型 ID 用来演示参数写法。恢复已有任务时使用任务原来的模型。
 
 
-# GPT Image 2.5 游戏素材
+# Noxgate 图片素材
 
 在项目中生产素材时，先读取该项目的资产清单、视觉规范与验收要求；不要把其他项目的素材、约定或参考资料带入当前项目。本 skill 本身只包含通用工作流。
 
 ## 模型与接口
 
-- `gpt-image-2.5-flare`：快速探索、批量候选；`gpt-image-2.5-sunburst`：定稿、参考图编辑与角色一致性要求高的资产。
-- NoxGate 的这两个模型 ID 必须带 `-flare` 或 `-sunburst`。通过浏览器登录 NoxGate、选择 API Key 授权，不手工复制密钥。
-- 仅允许 `gpt-image-2.5-flare` 和 `gpt-image-2.5-sunburst`。脚本从 NoxGate profile 与当前选定的凭据存储获取认证；不得打印、复制到 manifest 或产物元数据。
+- 可选模型取决于当前 API Key 的权限。把查询结果里的完整模型 ID 写入清单。模型显示「能力待核实」时，先查看该模型需要哪些参考输入和参数。
+- 按所选模型的能力填写 `size`、`resolution`、`quality`、`background`、`output_format` 和 `n`。首次使用新模型时，可省略其可选参数以使用网关默认值。游戏素材默认验收透明 PNG，纯色背景组合图可显式设置 `background: opaque`。
 - 网关的 `POST /images/generations` 可同步返回图片，也可返回任务 ID；异步任务由 `GET /images/generations/{task_id}` 查询。参考图使用上游可访问的 HTTPS URL。不要假设本地文件路径能直接当 `image_urls`。
 
 ## 生产流程
@@ -52,7 +51,7 @@ description: 使用 GPT-Image-2.5 Sunburst/Flare 经 NoxGate 生成游戏美术�
 "$PLUGIN_ROOT/bin/noxgate.sh" frame-batch validate --manifest /absolute/path/frames.json
 ```
 
-`assemble` 可重复执行，输出以临时文件替换，适合无人值守断点任务。源帧若尺寸、透明度或数量不合格会失败，不自动裁切或改变锚点；模型生成仍通过 `asset_batch.py`，且只允许 `gpt-image-2.5-flare` 或 `gpt-image-2.5-sunburst`。
+`assemble` 可重复执行，输出以临时文件替换，适合无人值守断点任务。源帧若尺寸、透明度或数量不合格会失败，不自动裁切或改变锚点。用 `asset-batch` 和当前 API Key 可用的模型生成源帧。
 
 ## 同类组合图工作流
 
@@ -80,5 +79,5 @@ manifest 格式按下方命令和脚本的 `--help` 创建；项目专属的资�
 manifest 示例（资源范围、提示词和尺寸应来自当前项目）：
 
 ```json
-{"defaults":{"model":"gpt-image-2.5-flare","size":"1024x1024","background":"transparent","output_format":"png","n":1},"assets":[{"id":"example_icon","prompt":"single clean game icon"}]}
+{"defaults":{"model":"<用户选定的模型 ID>","n":1},"assets":[{"id":"example_icon","prompt":"single clean game icon"}]}
 ```
