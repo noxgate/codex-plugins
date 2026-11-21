@@ -19,11 +19,11 @@ macOS 和 Linux 使用插件目录中的 `bin/noxgate.sh`，Windows 使用 `bin/
 
 凭据默认保存在用户级私有文件中。macOS 使用 `~/Library/Application Support/NoxGate`，Linux 使用 `${XDG_CONFIG_HOME:-~/.config}/noxgate`，Windows 使用 `%LOCALAPPDATA%\NoxGate`（可回退到 `APPDATA`）。两个插件与独立 CLI 可用同一个绝对 `NOXGATE_HOME` 指向自定义位置。`--store system` 使用系统安全存储，`--store portable-env --env-file /absolute/path/.env` 使用指定的私有明文文件。`auth migrate-storage` 可显式迁移存储，默认保留源凭据。平台启动器内含 keyring 所需的 Python 依赖，系统后端仍需本机服务可用。原有 `python3 bin/install.py` 仍可安装独立 CLI。
 
-在 Codex 使用 NoxGate 时，每次从技能菜单选中对应技能，或在请求中输入其调用名。通用图片、视频、音频分别使用 `$noxgate-imagegen`、`$noxgate-videogen`、`$noxgate-audiogen`，游戏图片素材和游戏音频分别使用 `$noxgate-image-assets`、`$noxgate-game-audio`。调用时会读取当前已绑定的 profile。
+在 Codex 使用 NoxGate 时，每次从技能菜单选中对应技能，或在请求中输入其调用名。通用图片、视频、音频分别使用 `$noxgate-imagegen`、`$noxgate-videogen`、`$noxgate-audiogen`，NoxGate 图片素材和 NoxGate 音频素材分别使用 `$noxgate-image-assets`、`$noxgate-game-audio`。调用时会读取当前已绑定的 profile。
 
 ## 选择模型和查看成本
 
-用户未指定模型时，先向用户展示当前 profile 可用的模型和费率，等用户选定后再生成。可按用途查询，用 `--count` 和 `--duration` 为可计算的费率估算基础费用。
+用户未指定模型时，先按当前 API Key 的权限和用途查询，默认展示各系列最新的适用型号和费率，并提供查看完整列表的入口。Codex 提供可点击选项时可直接点击选择，其他环境可回复编号或模型 ID。选定后才提交生成。可用 `--count` 和 `--duration` 估算基础费用。
 
 ```bash
 "/absolute/path/to/plugin/bin/noxgate.sh" models --kind image --operation generate --count 3

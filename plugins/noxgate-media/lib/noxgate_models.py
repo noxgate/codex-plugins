@@ -12,6 +12,18 @@ from noxgate_runtime import MediaError, load_provider, request_json
 
 
 CONFIRMED_IMAGE_EDIT_MODELS = {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}
+MODEL_ID_HYPHENS = str.maketrans("‐‑–", "---")
+MODEL_FAMILIES = (
+    (r"gpt-image-(?P<version>\d+(?:\.\d+)*)(?:-(?:flare|sunburst))?", "GPT Image"),
+    (r"(?:doubao-)?seedream-(?P<version>\d+(?:\.\d+)*)(?:-pro)?", "Seedream"),
+    (r"gemini-(?P<version>\d+(?:\.\d+)*)-(?P<variant>pro|flash-lite|flash)-image(?:-preview)?", "Gemini"),
+    (r"mj-v(?P<version>\d+(?:\.\d+)*)(?:-(?P<variant>.+))?", "Midjourney"),
+    (r"suno-v(?P<version>\d+(?:\.\d+)*)(?:-(?P<variant>wild))?(?:-beta)?", "Suno"),
+    (r"doubao-seed-audio-(?P<version>\d+(?:[.-]\d+)*)", "Seed Audio"),
+    (r"wan-?(?P<version>\d+(?:\.\d+)*)(?:-(?P<variant>.+))?", "Wan"),
+    (r"seedance-?(?P<version>\d+(?:\.\d+)*)(?:-(?P<variant>.+))?", "Seedance"),
+    (r"minimax-h(?P<version>\d+(?:\.\d+)*)(?:-(?P<variant>.+))?", "MiniMax H"),
+)
 OPERATIONS = {
     "image": ("generate", "edit"),
     "game-image": ("generate", "edit"),
@@ -30,7 +42,7 @@ UNITS = {
 
 def operation_support(model_id: str, capability: str, kind: str, operation: str) -> str | None:
     """Return confirmed, unverified, or None for an incompatible operation."""
-    normalized_id = model_id.lower().translate(str.maketrans("‐‑–", "---"))
+    normalized_id = model_id.lower().translate(MODEL_ID_HYPHENS)
     if kind in {"image", "game-image"}:
         if capability != "image_generation":
             return None
@@ -38,7 +50,7 @@ def operation_support(model_id: str, capability: str, kind: str, operation: str)
             ("-edit", "-remix", "-remove-bg", "-retexture", "-upload-paint", "-variation")
         )
         if operation == "edit":
-            return "confirmed" if model_id in CONFIRMED_IMAGE_EDIT_MODELS else "unverified"
+            return "confirmed" if normalized_id in CONFIRMED_IMAGE_EDIT_MODELS else "unverified"
         if edit_variant or normalized_id.endswith("-layerize"):
             return "unverified" if kind == "game-image" else None
         return "confirmed"
@@ -130,6 +142,35 @@ def authorized_models(base: str, token: str, kind: str, operation: str) -> tuple
     return models, isinstance(public, list)
 
 
+def model_family_version(model_id: str) -> tuple[str, tuple[int, ...]]:
+    normalized_id = model_id.lower().translate(MODEL_ID_HYPHENS)
+    for pattern, family in MODEL_FAMILIES:
+        match = re.fullmatch(pattern, normalized_id)
+        if match:
+            variant = match.groupdict().get("variant")
+            if variant:
+                family += " " + variant.replace("-", " ").title()
+            version = tuple(int(part) for part in re.split(r"[.-]", match["version"]))
+            return family, version
+    return model_id, ()
+
+
+def latest_models_by_family(models: list[dict]) -> list[dict]:
+    """Keep the latest compatible versions for the picker, leaving the full catalog intact."""
+    confirmed = [model for model in models if model["operation_support"] == "confirmed"]
+    families: dict[str, tuple[tuple[int, ...], list[str]]] = {}
+    for model in confirmed or models:
+        family, version = model_family_version(model["id"])
+        if family not in families or version > families[family][0]:
+            families[family] = (version, [model["id"]])
+        elif version == families[family][0]:
+            families[family][1].append(model["id"])
+    return [
+        {"family": family, "model_ids": model_ids}
+        for family, (_, model_ids) in families.items()
+    ]
+
+
 def listing(kind: str, operation: str, *, count: int | None = None, duration: Decimal | None = None) -> dict:
     if operation not in OPERATIONS[kind]:
         raise MediaError(f"{kind} 不支持模型用途 {operation}")
@@ -164,7 +205,8 @@ def listing(kind: str, operation: str, *, count: int | None = None, duration: De
                     model["estimated_base_cost"] = format((Decimal(price["amount"]) * quantity).normalize(), "f")
     return {"kind": kind, "operation": operation, "currency": currency, "price_source": "public_base_rate",
             "catalog_available": catalog_available, "count": count,
-            "duration_seconds_per_request": str(duration) if duration is not None else None, "models": models}
+            "duration_seconds_per_request": str(duration) if duration is not None else None,
+            "latest_by_family": latest_models_by_family(models), "models": models}
 
 
 def show_models(kind: str, operation: str, *, count: int | None = None, duration: Decimal | None = None) -> None:

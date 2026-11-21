@@ -79,6 +79,39 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertEqual([model["id"] for model in result["models"]], ["gpt-image-2.5-flare", "seedream"])
         self.assertEqual(result["models"][1]["estimated_base_cost"], "0.1")
 
+    def test_image_picker_keeps_latest_authorized_versions_and_complete_catalog(self):
+        image_ids = (
+            "gpt-image-2.5-sunburst", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst",
+            "doubao-seedream-4.5", "doubao-seedream-5.0-pro", "gemini-3-pro-image",
+            "gemini-3.1-flash-image-preview", "mj-v8.9", "mj-v8.10", "mj-v8.10-edit", "z-image-turbo",
+        )
+        allowed = {"data": [{"id": name} for name in (*image_ids, "suno-v6-beta")]}
+        public = {"data": [
+            {"model_id": name, "capability_type": "image_generation"}
+            for name in (*image_ids, "gpt-image-2.7-flare", "doubao-seedream-6.0-pro")
+        ] + [{"model_id": "suno-v6-beta", "capability_type": "audio_generation"}]}
+        with patch.object(models, "load_provider", return_value=("https://fixture.invalid/v1", "ngp_fixture")), \
+                patch.object(models, "request_json", side_effect=[allowed, public, {"data": {}}]):
+            result = models.listing("game-image", "generate")
+        self.assertEqual({model["id"] for model in result["models"]}, set(image_ids))
+        self.assertEqual({family["family"]: family["model_ids"] for family in result["latest_by_family"]}, {
+            "GPT Image": ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"],
+            "Seedream": ["doubao-seedream-5.0-pro"],
+            "Gemini Flash": ["gemini-3.1-flash-image-preview"],
+            "Gemini Pro": ["gemini-3-pro-image"],
+            "Midjourney": ["mj-v8.10"],
+            "z-image-turbo": ["z-image-turbo"],
+        })
+
+    def test_image_edit_picker_prefers_confirmed_model_over_newer_unverified_model(self):
+        entries = [{"id": name, "capability_type": "image_generation"}
+                   for name in ("gpt-image-2.5-flare", "gpt-image-2.6-flare")]
+        with patch.object(models, "load_provider", return_value=("https://fixture.invalid/v1", "ngp_fixture")), \
+                patch.object(models, "request_json", side_effect=[{"data": entries}, {"data": []}, {"data": {}}]):
+            result = models.listing("image", "edit")
+        self.assertEqual([item["operation_support"] for item in result["models"]], ["confirmed", "unverified"])
+        self.assertEqual(result["latest_by_family"], [{"family": "GPT Image", "model_ids": ["gpt-image-2.5-flare"]}])
+
     def test_generation_without_a_model_only_lists_choices(self):
         plugins = Path(__file__).resolve().parents[1]
         tools = {
